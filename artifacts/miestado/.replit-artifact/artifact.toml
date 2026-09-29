@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "MiEstado — Trámites conversacionales"
+description = "Aplicación GovTech para que la ciudadanía consulte, ejecute y haga seguimiento a trámites públicos mediante una experiencia conversacional clara y confiable, con flujos simulados para demostración."
+version = "1.0.0"
+id = "artifacts/miestado"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21729
+
+[services.development]
+run = "pnpm --filter @workspace/miestado run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/miestado", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/miestado/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21729"
+BASE_PATH = "/"
