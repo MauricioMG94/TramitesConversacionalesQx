@@ -79,6 +79,7 @@ services:
     restart: unless-stopped
     networks:
       - miestado_net
+      - nginx-proxy
     depends_on:
       - api
     expose:
@@ -88,12 +89,6 @@ services:
       - VIRTUAL_PORT=3000
       - LETSENCRYPT_HOST=${DOMAIN}
       - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-admin@${DOMAIN}}
-    # HTTPS via nginx-proxy si existe la red externa (configurable con
-    # PROXY_NETWORK en .env). Se deja como comentario porque cuando la
-    # red no existe, el `up` falla; ver miestado_app/Caddyfile para un
-    # gateway dedicado si no queres depender del contenedor compartido.
-    # networks:
-    #   - nginx-proxy
     ports:
       - "${FRONTEND_EXTERNAL_PORT:-5173}:3000"
 
