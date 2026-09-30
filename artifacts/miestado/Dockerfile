@@ -21,8 +21,13 @@ COPY scripts ./scripts
 COPY artifacts ./artifacts
 
 # Instalacion reproducible con el lockfile del workspace.
+# pnpm@10+ bloquea por defecto los postinstall scripts (esbuild, swc...).
+# Forzamos su ejecucion a traves de --shell-mode + pnpm rebuild para
+# que el binario nativo de esbuild quede disponible aunque el field
+# 'onlyBuiltDependencies' no se aplique en este contexto (pnpm 12.8.1+).
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile && \
+    pnpm rebuild esbuild @swc/core msw unrs-resolver
 
 # Construir SOLO el paquete del frontend MiEstado.
 ARG VITE_API_BASE=http://localhost:8888
