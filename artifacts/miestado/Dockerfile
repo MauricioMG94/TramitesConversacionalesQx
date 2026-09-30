@@ -27,14 +27,19 @@ COPY artifacts ./artifacts
 # package.json), lo que permite ejecutar los postinstall de esbuild, swc,
 # msw y unrs-resolver sin disparar ERR_PNPM_IGNORED_BUILDS.
 #
+# El Dockerfile fija NODE_ENV=production al inicio, lo que normalmente hace
+# que pnpm instale solo dependencias de produccion. Pero Vite (el bundler
+# del frontend) esta en devDependencies, asi que necesitamos instalar las
+# devDeps al menos durante esta etapa. Para eso pasamos --include=dev.
+#
 # Si el lockfile y pnpm-workspace.yaml divergen en 'overrides' (típico
 # cuando el lockfile fue generado con otra version de pnpm), caemos a
 # una instalacion no-frozen que regenera el lockfile y deja el stack en
 # estado consistente. Solo se ejecuta el fallback la primera vez; las
 # builds siguientes heredan el lockfile actualizado del layer cache.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile \
-    || pnpm install --no-frozen-lockfile
+    pnpm install --frozen-lockfile --include=dev \
+    || pnpm install --no-frozen-lockfile --include=dev
 
 # Construir SOLO el paquete del frontend MiEstado.
 ARG VITE_API_BASE=http://localhost:8888
