@@ -1,0 +1,28 @@
+# Construimos desde una imagen limpia para evitar arrastrar caches raros.
+node_modules
+dist
+.vite
+.cache
+
+# CRITICO: NO ignorar el nginx.conf del frontend ni nada dentro de
+# este directorio de artifacts: el Dockerfile los necesita en runtime.
+!nginx.conf
+!artifacts
+
+# Logs y archivos temporales.
+*.log
+tmp
+
+# Artefactos de Replit y configuraciones locales.
+.replit-artifact
+.replit
+.upm
+attached_assets
+
+# Backends y datos.
+miestado_app/.venv
+miestado_app/.env
+
+# Tests y utilidades de mantenimiento.
+tests
+docs

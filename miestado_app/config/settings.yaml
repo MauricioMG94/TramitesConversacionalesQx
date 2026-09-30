@@ -1,0 +1,66 @@
+# =============================================================
+# MiEstadoApp · configuración base
+# =============================================================
+
+# ──────────────────────────────────────────────
+# Aplicación
+# ──────────────────────────────────────────────
+app:
+  name: "MiEstadoApp"
+  env: "dev"                  # dev | prod
+  tz: "America/Bogota"
+  host: "0.0.0.0"
+  port: 8888
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"
+    - "http://127.0.0.1:5173"
+
+# ──────────────────────────────────────────────
+# Base de datos MongoDB
+# ──────────────────────────────────────────────
+database:
+  provider: "mongodb"
+  mongo:
+    uri: "mongodb://mongo:27017"
+    database: "miestado"
+    min_pool_size: 5
+    max_pool_size: 30
+    server_selection_timeout_ms: 5000
+  collections:
+    usuarios: "usuarios"
+    conversaciones: "conversaciones"
+    tramites: "tramites"
+    pagos: "pagos"
+    consentimientos: "consentimientos"
+    audit: "audit_events"
+
+# ──────────────────────────────────────────────
+# Pool del driver Mongo (motor)
+# ──────────────────────────────────────────────
+database_pool:
+  min_size: 5
+  max_size: 30
+
+# ──────────────────────────────────────────────
+# Cache y políticas internas
+# ──────────────────────────────────────────────
+cache:
+  default_ttl_seconds: 30
+
+# ──────────────────────────────────────────────
+# Logging
+# ──────────────────────────────────────────────
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+
+# ──────────────────────────────────────────────
+# Seed inicial
+# ──────────────────────────────────────────────
+seed_admin:
+  enabled: true
+  correo: "admin@miestado.local"
+  nombre_completo: "Administrador"
+  rol: "admin"
+  contrasena: "CambiarEnProduccion123*"

@@ -1,0 +1,24 @@
+# Environments
+.env
+.venv/
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.pytest_cache/
+
+# IDEs
+.idea/
+.vscode/
+
+# Testing
+.coverage
+
+# uv
+# El lockfile SÍ se commitea; el venv NO.

@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -6,14 +6,318 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   Activity, ArrowLeft, ArrowRight, Bell, Building2, CalendarDays, Car, Check, CheckCircle2,
   ChevronRight, CircleAlert, ClipboardCheck, Clock3, CreditCard, ExternalLink, FileCheck2,
-  FileText, HelpCircle, History, Inbox, LayoutDashboard, LockKeyhole, MapPin, Menu, MessageCircle,
-  PanelLeft, ReceiptText, RefreshCw, RotateCcw, Route as RouteIcon, Search,
+  FileText, HelpCircle, History, Inbox, LayoutDashboard, LockKeyhole, LogOut, Mail, MapPin,
+  Menu, MessageCircle, PanelLeft, ReceiptText, RefreshCw, RotateCcw, Route as RouteIcon, Search,
   Send, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, UploadCloud, UserRound,
   WalletCards, X, type LucideIcon,
 } from 'lucide-react';
 import {
-  Link, Route, Switch, Router as WouterRouter, useLocation,
+  Link, Route, Switch, Router as WouterRouter, useLocation, Redirect,
 } from 'wouter';
+
+// ─────────────────────────────────────────
+// Configuracion: URL base del backend FastAPI
+// Se puede sobreescribir con VITE_API_BASE en .env del frontend.
+// ─────────────────────────────────────────
+const API_BASE: string =
+  ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_BASE as string) ||
+  (typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'http://localhost:8888'
+    : '');
+
+// ─────────────────────────────────────────
+// AuthContext: token JWT, datos del usuario, login/logout.
+// Persistencia minima en localStorage (la expiracion la controla el backend).
+// ─────────────────────────────────────────
+type AuthUser = {
+  id_usuario: string;
+  correo: string;
+  nombre_completo: string;
+  rol: string;
+  estado: string;
+};
+
+type AuthState = {
+  user: AuthUser | null;
+  token: string | null;
+  loading: boolean;
+  error: string | null;
+};
+
+type AuthContextValue = AuthState & {
+  login: (correo: string, contrasena: string) => Promise<void>;
+  logout: () => void;
+};
+
+const TOKEN_KEY = 'miestado.token';
+const USER_KEY = 'miestado.user';
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (!ctx) {
+    throw new Error('useAuth debe usarse dentro de <AuthProvider>.');
+  }
+  return ctx;
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const initialToken = typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_KEY) : null;
+  const initialUser = useMemo<AuthUser | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const raw = window.localStorage.getItem(USER_KEY);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as AuthUser;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const [state, setState] = useState<AuthState>({
+    user: initialUser,
+    token: initialToken,
+    loading: false,
+    error: null,
+  });
+
+  const persist = useCallback((token: string | null, user: AuthUser | null) => {
+    if (typeof window === 'undefined') return;
+    if (token) window.localStorage.setItem(TOKEN_KEY, token);
+    else window.localStorage.removeItem(TOKEN_KEY);
+    if (user) window.localStorage.setItem(USER_KEY, JSON.stringify(user));
+    else window.localStorage.removeItem(USER_KEY);
+  }, []);
+
+  const login = useCallback(async (correo: string, contrasena: string) => {
+    setState((prev) => ({ ...prev, loading: true, error: null }));
+    try {
+      const body = new URLSearchParams();
+      body.set('username', correo);
+      body.set('password', contrasena);
+      const resp = await fetch(`${API_BASE}/api/auth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+        credentials: 'omit',
+      });
+      if (!resp.ok) {
+        const detail = (await resp.json().catch(() => ({} as Record<string, unknown>))).detail;
+        const message = typeof detail === 'string' ? detail : 'No fue posible iniciar sesion.';
+        setState((prev) => ({ ...prev, loading: false, error: message }));
+        throw new Error(message);
+      }
+      const tokenData = (await resp.json()) as { access_token: string; token_type: string };
+      const meResp = await fetch(`${API_BASE}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      });
+      if (!meResp.ok) {
+        throw new Error('Token recibido pero /me no respondio.');
+      }
+      const user = (await meResp.json()) as AuthUser;
+      persist(tokenData.access_token, user);
+      setState({ user, token: tokenData.access_token, loading: false, error: null });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error desconocido.';
+      setState((prev) => ({ ...prev, loading: false, error: message }));
+      throw err;
+    }
+  }, [persist]);
+
+  const logout = useCallback(() => {
+    persist(null, null);
+    setState({ user: null, token: null, loading: false, error: null });
+  }, [persist]);
+
+  const value = useMemo<AuthContextValue>(
+    () => ({ ...state, login, logout }),
+    [state, login, logout],
+  );
+
+  // PING inicial para confirmar que el token guardado sigue siendo valido.
+  useEffect(() => {
+    if (!state.token) return;
+    let cancelled = false;
+    fetch(`${API_BASE}/api/auth/me`, { headers: { Authorization: `Bearer ${state.token}` } })
+      .then((resp) => {
+        if (cancelled) return;
+        if (!resp.ok) {
+          persist(null, null);
+          setState({ user: null, token: null, loading: false, error: null });
+        }
+      })
+      .catch(() => {
+        // silencioso: la red puede estar caida; no cerrar sesion por eso.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state.token, persist]);
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+// ─────────────────────────────────────────
+// requireAuth: HOC que protege una vista y redirige a /login si no hay sesion.
+// ─────────────────────────────────────────
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { token, loading } = useAuth();
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    if (!loading && !token) navigate('/login');
+  }, [loading, token, navigate]);
+  if (!token) {
+    return (
+      <div className="grid min-h-[60vh] place-items-center text-sm text-[#6D7890]">
+        Redirigiendo a inicio de sesion...
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+// ─────────────────────────────────────────
+// Login: formulario minimo que llama al backend.
+// ─────────────────────────────────────────
+function Login() {
+  const { login } = useAuth();
+  const [, navigate] = useLocation();
+  const [correo, setCorreo] = useState('admin@miestado.local');
+  const [contrasena, setContrasena] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!correo.trim() || !contrasena) return;
+    setSubmitting(true);
+    try {
+      await login(correo.trim(), contrasena);
+      navigate('/inicio');
+    } catch {
+      // El mensaje de error ya queda en el AuthContext y se muestra abajo.
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-[100dvh] bg-[#F6F8FC] text-[#172033]">
+      <header className="mx-auto flex max-w-7xl items-center justify-between px-5 py-6 sm:px-8">
+        <Logo />
+        <Link href="/" className="text-sm font-bold text-[#173BFF]">
+          Volver al inicio
+        </Link>
+      </header>
+      <main className="mx-auto grid max-w-7xl items-center gap-10 px-5 py-12 sm:px-8 lg:grid-cols-[1.1fr_.9fr]">
+        <section>
+          <p className="mb-6 flex items-center gap-2 text-xs font-bold uppercase tracking-[.18em] text-[#173BFF]">
+            <span className="h-px w-8 bg-[#173BFF]" /> Acceso seguro
+          </p>
+          <h1 className="font-display text-4xl font-extrabold leading-[.94] tracking-[-.05em] sm:text-5xl">
+            Inicia sesion para entrar al piloto.
+          </h1>
+          <p className="mt-5 max-w-lg text-base leading-7 text-[#67748D]">
+            Esta plataforma conversa con tu ciudad. Necesitamos saber quien eres para
+            consultar tus datos oficiales y dejar constancia de cada paso.
+          </p>
+          <div className="mt-8 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-2xl border border-[#DEE5F1] bg-white p-5">
+              <div className="mb-3 flex items-center gap-2 text-[#173BFF]">
+                <ShieldCheck size={18} />
+                <span className="text-sm font-bold">Identidad verificada</span>
+              </div>
+              <p className="text-xs leading-5 text-[#68748A]">
+                Tu correo y contrasena viajan cifrados al backend y nunca se exponen a
+                servicios externos.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-[#DEE5F1] bg-white p-5">
+              <div className="mb-3 flex items-center gap-2 text-[#08784E]">
+                <LockKeyhole size={18} />
+                <span className="text-sm font-bold">Consentimiento explícito</span>
+              </div>
+              <p className="text-xs leading-5 text-[#68748A]">
+                Antes de cada consulta sensible, te pediremos confirmacion visible en la
+                conversacion.
+              </p>
+            </div>
+          </div>
+        </section>
+        <section className="rounded-3xl border border-[#DEE5F1] bg-white p-6 shadow-sm sm:p-9">
+          <h2 className="font-display text-2xl font-bold">Entrar</h2>
+          <p className="mt-1 text-sm text-[#7C879B]">
+            Usa el usuario sembrado por el backend (admin@miestado.local) o uno creado
+            por un administrador.
+          </p>
+          <form className="mt-7 space-y-4" onSubmit={onSubmit} data-testid="form-login">
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold uppercase tracking-[.12em] text-[#8792A6]">
+                Correo
+              </span>
+              <div className="flex items-center gap-2 rounded-xl border border-[#DDE4F0] bg-white px-3 py-2.5 focus-within:border-[#173BFF]">
+                <Mail size={16} className="text-[#7C879B]" />
+                <input
+                  type="email"
+                  name="username"
+                  autoComplete="username"
+                  required
+                  value={correo}
+                  onChange={(e) => setCorreo(e.target.value)}
+                  data-testid="input-login-correo"
+                  placeholder="tu@correo.com"
+                  className="w-full bg-transparent text-sm outline-none"
+                />
+              </div>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold uppercase tracking-[.12em] text-[#8792A6]">
+                Contrasena
+              </span>
+              <div className="flex items-center gap-2 rounded-xl border border-[#DDE4F0] bg-white px-3 py-2.5 focus-within:border-[#173BFF]">
+                <LockKeyhole size={16} className="text-[#7C879B]" />
+                <input
+                  type="password"
+                  name="password"
+                  autoComplete="current-password"
+                  required
+                  minLength={8}
+                  value={contrasena}
+                  onChange={(e) => setContrasena(e.target.value)}
+                  data-testid="input-login-contrasena"
+                  placeholder="********"
+                  className="w-full bg-transparent text-sm outline-none"
+                />
+              </div>
+            </label>
+            <button
+              type="submit"
+              disabled={submitting}
+              data-testid="button-login"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#173BFF] px-5 py-3 text-sm font-bold text-white shadow-[0_7px_18px_rgba(23,59,255,.18)] transition-all hover:-translate-y-0.5 hover:bg-[#315CFF] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? 'Verificando...' : 'Iniciar sesion'}
+            </button>
+            <LoginError />
+            <p className="text-center text-[11px] text-[#98A1B1]">
+              API backend: <code className="rounded bg-[#EFF2F7] px-1.5 py-0.5">{API_BASE || 'no configurada'}</code>
+            </p>
+          </form>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function LoginError() {
+  const { error } = useAuth();
+  if (!error) return null;
+  return (
+    <p data-testid="status-login-error" className="rounded-xl bg-[#FFF0EF] px-3 py-2 text-xs font-bold text-[#C8463C]">
+      {error}
+    </p>
+  );
+}
 
 const queryClient = new QueryClient();
 
@@ -68,6 +372,7 @@ function EmptyState({ icon: Icon, title, copy, action }: { icon: LucideIcon; tit
 function Shell({ children }: { children: ReactNode }) {
   const [location, setLocation] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { user, logout } = useAuth();
   const entity = location.startsWith('/entidad');
   const nav = entity ? [
     { href: '/entidad', label: 'Resumen', icon: LayoutDashboard },
@@ -80,6 +385,20 @@ function Shell({ children }: { children: ReactNode }) {
     { href: '/explorar', label: 'Explorar', icon: Search },
   ];
   const active = (href: string) => location === href || (href !== '/inicio' && location.startsWith(href));
+
+  const initials = useMemo(() => {
+    if (!user) return 'K';
+    const parts = user.nombre_completo.trim().split(/\s+/);
+    const first = parts[0]?.slice(0, 1) ?? '';
+    const last = parts.length > 1 ? parts[parts.length - 1]?.slice(0, 1) ?? '' : '';
+    const result = (first + last).toUpperCase() || 'K';
+    return result;
+  }, [user]);
+
+  const handleLogout = () => {
+    logout();
+    setLocation('/login');
+  };
   return <div className="min-h-[100dvh] bg-[#F6F8FC]">
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-[252px] flex-col bg-[#173BFF] px-5 py-6 text-white lg:flex">
       <div className="mb-10 flex items-center justify-between"><Logo light /><IconButton label="contraer menú" onClick={() => setMobileOpen(false)}><PanelLeft size={17} /></IconButton></div>
@@ -89,15 +408,18 @@ function Shell({ children }: { children: ReactNode }) {
       <div className="mt-auto rounded-2xl border border-[#5B76FF] bg-[#2549FF] p-4"><div className="mb-3 flex items-center gap-2 text-[#DDE3FF]"><ShieldCheck size={15} /><span className="text-xs font-bold">Entorno protegido</span></div><p className="text-[11px] leading-5 text-[#C9D3FF]">Tus decisiones quedan bajo tu control. Este es un piloto con datos simulados.</p></div>
     </aside>
     {mobileOpen && <div className="fixed inset-0 z-50 bg-[#172033]/35 lg:hidden" onClick={() => setMobileOpen(false)}><div className="h-full w-[280px] bg-[#173BFF] p-5 text-white" onClick={(e) => e.stopPropagation()}><div className="mb-10 flex justify-between"><Logo light /><IconButton label="cerrar menú" onClick={() => setMobileOpen(false)}><X size={18} /></IconButton></div>{nav.map(({ href, label, icon: Icon }) => <Link key={href} href={href} onClick={() => setMobileOpen(false)} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-[#E3E7FF]"><Icon size={18} />{label}</Link>)}{!entity && <Link href="/ayuda" onClick={() => setMobileOpen(false)} data-testid="mobile-menu-ayuda" className="mt-3 flex items-center gap-3 rounded-xl border-t border-[#5272FF] px-3 pt-5 text-sm font-semibold text-[#E3E7FF]"><HelpCircle size={18} />Ayuda</Link>}</div></div>}
-    <div className="lg:pl-[252px]"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-[#E6EAF2] bg-[#F6F8FC]/90 px-5 backdrop-blur-md sm:px-8"><div className="flex items-center gap-3"><button type="button" aria-label="abrir menú" data-testid="button-abrir-menu" className="text-[#45526B] lg:hidden" onClick={() => setMobileOpen(true)}><Menu size={22} /></button><span className="hidden h-2 w-2 rounded-full bg-[#00C2B8] sm:block" /><span className="text-xs font-semibold text-[#6D7890]">{entity ? 'Secretaría de Movilidad' : 'Medellín, Antioquia'}</span></div><div className="flex items-center gap-3"><PilotPill compact /><Link href="/notificaciones" data-testid="link-notificaciones-header" className="relative grid h-10 w-10 place-items-center rounded-xl border border-[#DDE3F0] bg-white text-[#53617B]"><Bell size={17} /><span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[#FF6B5E]" /></Link><Link href={entity ? '/entidad' : '/perfil'} data-testid="link-avatar-header" className="grid h-9 w-9 place-items-center rounded-full bg-[#FFC83D] font-display text-sm font-extrabold text-[#6F5000]">{entity ? 'SM' : 'K'}</Link></div></header><main className="mx-auto max-w-[1440px] px-5 py-8 pb-24 sm:px-8 lg:px-10 lg:pb-10">{children}</main></div>
+    <div className="lg:pl-[252px]"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-[#E6EAF2] bg-[#F6F8FC]/90 px-5 backdrop-blur-md sm:px-8"><div className="flex items-center gap-3"><button type="button" aria-label="abrir menú" data-testid="button-abrir-menu" className="text-[#45526B] lg:hidden" onClick={() => setMobileOpen(true)}><Menu size={22} /></button><span className="hidden h-2 w-2 rounded-full bg-[#00C2B8] sm:block" /><span className="text-xs font-semibold text-[#6D7890]">{entity ? 'Secretaría de Movilidad' : 'Medellín, Antioquia'}</span></div><div className="flex items-center gap-3"><PilotPill compact /><Link href="/notificaciones" data-testid="link-notificaciones-header" className="relative grid h-10 w-10 place-items-center rounded-xl border border-[#DDE3F0] bg-white text-[#53617B]"><Bell size={17} /><span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[#FF6B5E]" /></Link><Link href={entity ? '/entidad' : '/perfil'} data-testid="link-avatar-header" className="grid h-9 w-9 place-items-center rounded-full bg-[#FFC83D] font-display text-sm font-extrabold text-[#6F5000]">{entity ? 'SM' : initials}</Link>{user && (<button type="button" onClick={handleLogout} data-testid="button-logout" aria-label="cerrar sesión" className="ml-1 flex items-center gap-1.5 rounded-xl border border-[#DDE3F0] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#53617B] hover:border-[#C8463C] hover:text-[#C8463C]"><LogOut size={13} /><span className="hidden sm:inline">Salir</span></button>)}</div></header><main className="mx-auto max-w-[1440px] px-5 py-8 pb-24 sm:px-8 lg:px-10 lg:pb-10">{children}</main></div>
     <nav className="fixed inset-x-3 bottom-3 z-30 flex justify-around rounded-2xl border border-[#DDE3F0] bg-white/95 p-2 shadow-[0_10px_35px_rgba(23,32,51,.12)] backdrop-blur lg:hidden">{(entity ? nav : [...nav, { href: '/notificaciones', label: 'Avisos', icon: Bell }]).slice(0, 5).map(({ href, label, icon: Icon }) => <Link key={href} href={href} data-testid={`mobile-nav-${href}`} className={`flex flex-col items-center gap-1 rounded-xl px-3 py-1.5 text-[10px] font-bold ${active(href) ? 'text-[#173BFF]' : 'text-[#8791A5]'}`}><Icon size={18} />{label}</Link>)}</nav>
   </div>;
 }
 
 function Landing() {
   const [demoOpen, setDemoOpen] = useState(false);
+  const { user, logout } = useAuth();
+  const [, navigate] = useLocation();
+  const handleLogout = () => { logout(); navigate('/'); };
   return <div className="min-h-[100dvh] overflow-hidden bg-[#F6F8FC] text-[#172033]">
-    <header className="relative z-20 mx-auto flex max-w-7xl items-center justify-between px-5 py-6 sm:px-8"><Logo /><div className="hidden items-center gap-7 text-sm font-semibold text-[#61708B] md:flex"><Link href="/como-funciona" data-testid="link-landing-como-funciona">Cómo funciona</Link><Link href="/explorar" data-testid="link-landing-explorar">Explorar trámites</Link><Link href="/demo" data-testid="link-landing-demo">Ver demo</Link></div><div className="flex items-center gap-3"><PilotPill compact /><Button href="/inicio" testId="link-landing-entrar">Entrar al piloto</Button></div></header>
+    <header className="relative z-20 mx-auto flex max-w-7xl items-center justify-between px-5 py-6 sm:px-8"><Logo /><div className="hidden items-center gap-7 text-sm font-semibold text-[#61708B] md:flex"><Link href="/como-funciona" data-testid="link-landing-como-funciona">Cómo funciona</Link><Link href="/explorar" data-testid="link-landing-explorar">Explorar trámites</Link><Link href="/demo" data-testid="link-landing-demo">Ver demo</Link></div><div className="flex items-center gap-3"><PilotPill compact />{user ? (<><span data-testid="status-landing-user" className="hidden text-xs font-bold text-[#53617B] sm:inline">Hola, {user.nombre_completo.split(' ')[0]}</span><Button href="/inicio" testId="link-landing-entrar">Entrar al piloto</Button><button type="button" onClick={handleLogout} data-testid="button-landing-logout" className="rounded-xl border border-[#DDE3F0] bg-white px-3 py-2.5 text-sm font-bold text-[#53617B] hover:border-[#C8463C] hover:text-[#C8463C]">Salir</button></>) : (<Button href="/login" testId="link-landing-login">Iniciar sesión</Button>)}</div></header>
     <section className="relative mx-auto grid max-w-7xl items-center gap-14 px-5 pb-20 pt-10 sm:px-8 lg:grid-cols-[1.05fr_.95fr] lg:pb-28 lg:pt-20"><div className="relative z-10 animate-rise"><p className="mb-6 flex items-center gap-2 text-xs font-bold uppercase tracking-[.18em] text-[#173BFF]"><span className="h-px w-8 bg-[#173BFF]" />Un nuevo lenguaje para lo público</p><h1 className="max-w-3xl font-display text-[clamp(3.5rem,7vw,6.8rem)] font-extrab800 leading-[.94] tracking-[-.075em] text-[#172033]">Lo público,<br /><span className="text-[#173BFF]">más claro.</span></h1><p className="mt-8 max-w-xl text-lg leading-8 text-[#67748D]">MiEstado convierte trámites complejos en una conversación que puedes entender, preparar y seguir. Sin perder de vista quién valida cada paso.</p><div className="mt-9 flex flex-wrap items-center gap-3"><Button href="/asistente" icon={ArrowRight} testId="link-landing-empezar">Cuéntame qué necesitas</Button><button type="button" data-testid="button-landing-preview" onClick={() => setDemoOpen(true)} className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-[#42506A] hover:bg-white"><MessageCircle size={17} />Ver conversación</button></div><div className="mt-12 flex items-center gap-6 text-xs font-semibold text-[#7A8499]"><span className="flex items-center gap-2"><ShieldCheck size={16} className="text-[#18C98B]" />Identidad verificada</span><span className="flex items-center gap-2"><LockKeyhole size={15} className="text-[#173BFF]" />Consentimiento visible</span></div></div>
       <div className="relative min-h-[470px] animate-rise [animation-delay:.15s]"><div className="absolute -right-20 top-4 h-72 w-72 rounded-full bg-[#DDF9F5] blur-3xl" /><div className="absolute bottom-0 left-0 h-48 w-48 rounded-full bg-[#FFF0D0] blur-3xl" /><div className="relative mx-auto max-w-[470px] rotate-[2deg] rounded-[28px] border border-[#D7DFEF] bg-white p-4 shadow-[0_25px_70px_rgba(23,59,255,.13)]"><div className="flex items-center justify-between border-b border-[#EEF1F6] px-2 pb-4"><div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#E9EDFF] text-[#173BFF]"><MessageCircle size={16} /></span><div><p className="text-xs font-bold">Asistente MiEstado</p><p className="text-[10px] text-[#78849A]">Listo para acompañarte</p></div></div><span className="rounded-full bg-[#DDF8ED] px-2 py-1 text-[10px] font-bold text-[#08784E]">En línea</span></div><div className="space-y-4 px-2 py-5"><div className="max-w-[285px] rounded-2xl rounded-tl-sm bg-[#F0F3F9] p-4 text-sm leading-6 text-[#42506A]">Hola, Kevin. Puedo ayudarte a resolver un trámite de principio a fin. ¿Qué necesitas hacer hoy?</div><div className="ml-auto max-w-[270px] rounded-2xl rounded-tr-sm bg-[#173BFF] p-4 text-sm leading-6 text-white">Quiero pasar mi carro de Montería a Medellín.</div><div className="max-w-[315px] rounded-2xl rounded-tl-sm border border-[#DDE7FF] bg-[#F5F7FF] p-4 text-sm leading-6 text-[#42506A]">Entendido. Encontré tu Chevrolet Onix ABC123. Te mostraré los pasos y pediré tu permiso antes de consultar fuentes oficiales.</div></div><div className="flex items-center gap-2 rounded-xl bg-[#F6F8FC] p-2"><span className="flex-1 px-2 text-xs text-[#98A1B1]">Escribe tu necesidad...</span><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#173BFF] text-white"><Send size={14} /></span></div></div><div className="absolute -bottom-5 -left-6 rounded-2xl border border-[#D7DFEF] bg-white p-4 shadow-[0_15px_35px_rgba(23,32,51,.1)]"><div className="mb-2 flex items-center gap-2 text-xs font-bold"><span className="grid h-7 w-7 place-items-center rounded-lg bg-[#DDF8ED] text-[#08784E]"><CheckCircle2 size={15} /></span>Fuente oficial consultada</div><p className="pl-9 text-[11px] text-[#738098]">RUNT · hace un momento</p></div></div></section>
     <section className="border-y border-[#E6EAF2] bg-white"><div className="mx-auto grid max-w-7xl gap-0 px-5 sm:px-8 md:grid-cols-3"><div className="border-b border-[#E6EAF2] px-0 py-8 md:border-b-0 md:border-r md:pr-10"><p className="mb-3 font-mono text-xs font-bold text-[#173BFF]">01 / Entender</p><h2 className="font-display text-xl font-bold">Una intención, no un formulario.</h2><p className="mt-2 text-sm leading-6 text-[#758097]">Dices qué necesitas en tus palabras. Nosotros ordenamos el camino.</p></div><div className="border-b border-[#E6EAF2] px-0 py-8 md:border-b-0 md:border-r md:px-10"><p className="mb-3 font-mono text-xs font-bold text-[#00A79E]">02 / Preparar</p><h2 className="font-display text-xl font-bold">Cada requisito a la vista.</h2><p className="mt-2 text-sm leading-6 text-[#758097]">Documentos, fuentes y decisiones explicadas antes de actuar.</p></div><div className="px-0 py-8 md:pl-10"><p className="mb-3 font-mono text-xs font-bold text-[#CC8700]">03 / Seguir</p><h2 className="font-display text-xl font-bold">Un radicado que cuenta la historia.</h2><p className="mt-2 text-sm leading-6 text-[#758097]">Consulta el avance y la trazabilidad cuando quieras.</p></div></div></section>
@@ -251,12 +573,46 @@ function PageRouter() {
   </Switch>;
 }
 
+// Rutas publicas: accesibles sin autenticacion.
+function PublicRoutes() {
+  return <Switch>
+    <Route path="/" component={Landing} />
+    <Route path="/login" component={Login} />
+    <Route path="/como-funciona" component={HowItWorks} />
+    <Route path="/ayuda" component={Help} />
+    <Route path="/demo" component={Demo} />
+  </Switch>;
+}
+
+// Rutas protegidas: requieren sesion activa (RequireAuth redirige a /login).
+function ProtectedRoutes() {
+  return <RequireAuth><Shell><PageRouter /></Shell></RequireAuth>;
+}
+
 function AppRouter() {
-  return <Switch><Route path="/" component={Landing} /><Route component={() => <Shell><PageRouter /></Shell>} /></Switch>;
+  return <Switch>
+    <Route path="/login" component={Login} />
+    <Route path="/" component={Landing} />
+    <Route path="/como-funciona" component={HowItWorks} />
+    <Route path="/ayuda" component={Help} />
+    <Route path="/demo" component={Demo} />
+    <Route component={() => <RequireAuth><Shell><PageRouter /></Shell></RequireAuth>} />
+  </Switch>;
 }
 
 function App() {
-  return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><ErrorBoundary><AppRouter /></ErrorBoundary></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>;
+  return <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <AuthProvider>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+          <ErrorBoundary>
+            <AppRouter />
+          </ErrorBoundary>
+        </WouterRouter>
+      </AuthProvider>
+      <Toaster />
+    </TooltipProvider>
+  </QueryClientProvider>;
 }
 
 export default App;

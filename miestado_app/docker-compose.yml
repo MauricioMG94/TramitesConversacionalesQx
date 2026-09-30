@@ -1,0 +1,87 @@
+services:
+  # ── Base de Datos ──
+  mongo:
+    image: mongo:7
+    container_name: miestado_mongo
+    restart: unless-stopped
+    networks:
+      - miestado_net
+    ports:
+      - "${MONGO_EXTERNAL_PORT:-27017}:27017"
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-miestado}
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  # ── Backend API (FastAPI) ──
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: miestado-app:latest
+    container_name: miestado_app_api
+    restart: unless-stopped
+    networks:
+      - miestado_net
+    depends_on:
+      mongo:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - APP__ENV=${APP__ENV:-dev}
+      - API_HOST=0.0.0.0
+      - API_PORT=8888
+      - MONGO_HOST=mongo
+      - MONGO_PORT=27017
+      - MONGO_DB=${MONGO_DB:-miestado}
+      - MONGO_URI=mongodb://mongo:27017
+      - SECRET_KEY=${SECRET_KEY:-please-change-me-please-change-me}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      # Origenes permitidos: el navegador llega al api desde el host (localhost)
+      # o desde un frontend que viva dentro del stack docker.
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost:8888}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SEED_ADMIN_ENABLED=${SEED_ADMIN_ENABLED:-true}
+      - SEED_ADMIN_CORREO=${SEED_ADMIN_CORREO:-admin@miestado.local}
+      - SEED_ADMIN_NOMBRE=${SEED_ADMIN_NOMBRE:-Administrador}
+      - SEED_ADMIN_CONTRASENA=${SEED_ADMIN_CONTRASENA:-CambiarEnProduccion123*}
+      - SEED_ADMIN_ROL=${SEED_ADMIN_ROL:-admin}
+    expose:
+      - "8888"
+    ports:
+      - "${API_EXTERNAL_PORT:-8888}:8888"
+
+  # ── Frontend (React + Vite construido, servido por nginx) ──
+  # El contexto de build es la RAIZ del workspace para que pnpm pueda
+  # resolver el monorepo. El Dockerfile vive en artifacts/miestado/.
+  frontend:
+    build:
+      context: ..
+      dockerfile: artifacts/miestado/Dockerfile
+      args:
+        # URL desde la que el navegador llamara a la API.
+        # En piloto el frontend sirve en localhost:5173 y la API en localhost:8888.
+        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8888}
+    image: miestado-frontend:latest
+    container_name: miestado_app_frontend
+    restart: unless-stopped
+    networks:
+      - miestado_net
+    depends_on:
+      - api
+    ports:
+      - "${FRONTEND_EXTERNAL_PORT:-5173}:3000"
+
+volumes:
+  mongo_data:
+
+networks:
+  miestado_net:
+    driver: bridge
