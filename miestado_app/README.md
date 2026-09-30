@@ -248,3 +248,82 @@ MONGO_HOST=localhost MONGO_URI=mongodb://localhost:27017 \
   variables globales.
 * Configuracion en YAML (`config/settings.yaml`) y en `.env` para
   secretos.
+
+---
+
+## Integracion con RUNT
+
+El modulo `/api/vehiculo/consultar` consume el **Registro Unico Nacional
+de Transito** (RUNT) via OAuth2 `client_credentials`. Soporta dos
+modos controlados por `RUNT_MODE`:
+
+* **`mock`** (default en piloto) - resuelve la consulta en memoria con
+  un dataset deterministico por placa (no requiere credenciales).
+* **`real`** - llama al upstream real sobre HTTPS. Opcionalmente aplica
+  **mTLS** leyendo certificados PEM montados en `/secrets/runt/`.
+
+### Variables de entorno relevantes (`.env`)
+
+| Variable | Default | Notas |
+|---|---|---|
+| `RUNT_ENABLED` | `true` | Apaga toda la integracion. |
+| `RUNT_MODE` | `mock` | `mock` / `real`. |
+| `RUNT_BASE_URL` | testing endpoint | URL base del upstream real. |
+| `RUNT_TIMEOUT_SECONDS` | `15` | Timeout HTTP. |
+| `RUNT_CLIENT_ID` / `RUNT_CLIENT_SECRET` | - | Solo en modo `real`. |
+| `RUNT_MTLS_ENABLED` | `false` | Activa autenticacion mutua. |
+| `RUNT_CERT_PATH` / `RUNT_KEY_PATH` / `RUNT_CA_PATH` | `/secrets/runt/*` | PEMs para mTLS. |
+
+### Cache de tokens
+
+El cliente RUNT mantiene un **singleton con cache de token** en memoria
+del proceso. El TTL efectivo descuenta un `token_refresh_skew_seconds`
+(60s por default) del `expires_in` que devuelve el endpoint de token.
+Esto evita re-autenticarse en cada llamada y respeta el limite de 1h
+indicado por la operacion.
+
+### Endpoints expuestos
+
+* `POST /api/vehiculo/consultar` (autenticado con JWT activo)
+  * Request: `{ "placa": "ABC123", "documento_propietario": "12345678" }`
+  * Response 200:
+    ```json
+    {
+      "vehiculo": {
+        "marca": "Mazda",
+        "modelo": "2017",
+        "clase": "Automovil",
+        "color": "Gris",
+        "propietario_doc": "12345678",
+        "estado": "ACTIVO"
+      },
+      "fuente": "RUNT",
+      "cacheado": false
+    }
+    ```
+* `POST /api/conversaciones/mensaje` (autenticado con JWT activo)
+  * Request:
+    ```json
+    {
+      "id_conversacion": null,
+      "texto": "Quiero consultar mi vehiculo ABC123 con documento 12345678",
+      "correo_usuario": "ciudadano@miestado.local"
+    }
+    ```
+  * El bot detecta placa + documento en el texto y responde
+    automaticamente con la informacion de RUNT, ademas de persistir la
+    conversacion en MongoDB.
+
+### Como poblar los secretos mTLS
+
+1. Conseguir el bundle PEM de RUNT (cliente cert, cliente key y CA opcional).
+2. Copiarlos a `miestado_app/secrets/runt/` (NO se commitea):
+   ```
+   secrets/runt/client.crt
+   secrets/runt/client.key
+   secrets/runt/ca.pem
+   ```
+3. En `.env`: `RUNT_MODE=real` y `RUNT_MTLS_ENABLED=true`.
+4. `docker compose build --no-cache api && docker compose up -d api`.
+
+Ver `miestado_app/secrets/README.md` para mas detalle.

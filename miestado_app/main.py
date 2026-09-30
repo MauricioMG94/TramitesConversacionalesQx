@@ -24,7 +24,7 @@ import uvicorn
 
 from core.python.db.mongo_connection import close_pool, init_pool
 from core.python.services import usuario_service
-from routers import auth, health, usuarios
+from routers import auth, conversaciones, health, usuarios, vehiculo
 
 load_dotenv()
 
@@ -98,6 +98,8 @@ from core.python.auth.deps import get_current_active_user
 
 api_router = APIRouter(dependencies=[Depends(get_current_active_user)])
 api_router.include_router(usuarios.router)
+api_router.include_router(vehiculo.router)
+api_router.include_router(conversaciones.router)
 app.include_router(api_router)
 
 

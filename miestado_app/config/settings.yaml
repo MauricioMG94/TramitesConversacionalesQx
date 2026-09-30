@@ -64,3 +64,49 @@ seed_admin:
   nombre_completo: "Administrador"
   rol: "admin"
   contrasena: "CambiarEnProduccion123*"
+
+# ──────────────────────────────────────────────
+# Integracion con RUNT (Registro Unico Nacional de Transito)
+# Solo aplica al endpoint /api/vehiculo/consultar y al bot conversacional.
+#
+# Modo de operacion:
+#   mock  -> resuelve en memoria deterministico por placa (pilot).
+#   real  -> llama al upstream real con OAuth2 client_credentials + mTLS opcional.
+#
+# Los secretos y rutas de certificados se leen desde variables de entorno
+# (RUNT_CLIENT_ID, RUNT_CLIENT_SECRET, RUNT_CERT_PATH, etc.). El archivo
+# YAML solo declara defaults y politicas.
+# ──────────────────────────────────────────────
+runt:
+  enabled: true
+  mode: "mock"
+  base_url: "https://pruebas-api.runt.example.gov.co"
+  token_path: "/oauth/token"
+  vehiculo_path: "/api/vehiculo/consultar"
+  timeout_seconds: 15
+  token_ttl_seconds: 3600
+  # Margen (segundos) que se descuenta del TTL antes de considerar el token expirado.
+  token_refresh_skew_seconds: 60
+  mtls:
+    enabled: false
+    # Cuando mTLS.enabled = true, RUNT_CERT_PATH y RUNT_KEY_PATH deben
+    # apuntar a archivos PEM dentro del contenedor (tipicamente
+    # /secrets/runt/client.crt y /secrets/runt/client.key).
+    # RUNT_CA_PATH es opcional y sobrescribe la CA de confianza del sistema.
+    cert_path_env: "RUNT_CERT_PATH"
+    key_path_env: "RUNT_KEY_PATH"
+    ca_path_env: "RUNT_CA_PATH"
+
+# ──────────────────────────────────────────────
+# Bot conversacional (modulo de chat)
+# Detecta intenciones en mensajes del usuario y dispara integraciones.
+# ──────────────────────────────────────────────
+chat:
+  enabled: true
+  persist_conversaciones: true
+  # Ventana maxima de historial que el bot recibe por mensaje (numero de
+  # turnos previos). 0 desactiva el envio de historial al bot.
+  max_historial: 10
+  # Cuando es true, el endpoint devuelve el vehiculo consultado (crudo)
+  # ademas de la respuesta redactada, util para depurar el front.
+  debug_vehiculo: false

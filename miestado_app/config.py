@@ -122,3 +122,76 @@ def get_collection_name(name: str) -> str:
     settings = get_settings()
     collections = settings.get('database', {}).get('collections', {})
     return collections.get(name, name)
+
+
+@lru_cache(maxsize=1)
+def get_runt_config() -> dict:
+    """Devuelve la configuracion de la integracion con RUNT.
+
+    Combina defaults declarados en ``config/settings.yaml`` con variables
+    de entorno. Cada variable de entorno listada en ``mtls.*_path_env``
+    determina la ruta del archivo PEM del certificado/clave/CA.
+
+    Returns:
+        Diccionario con todas las claves efectivas para inicializar el
+        cliente de RUNT.
+    """
+    settings = get_settings()
+    base = settings.get('runt', {})
+    mtls_base = base.get('mtls', {})
+
+    enabled_env = str(get_env_var('RUNT_ENABLED', base.get('enabled', True))).lower()
+    mode_env = get_env_var('RUNT_MODE', base.get('mode', 'mock'))
+
+    mtls_cert_env_name = mtls_base.get('cert_path_env', 'RUNT_CERT_PATH')
+    mtls_key_env_name = mtls_base.get('key_path_env', 'RUNT_KEY_PATH')
+    mtls_ca_env_name = mtls_base.get('ca_path_env', 'RUNT_CA_PATH')
+
+    mtls_enabled = str(get_env_var('RUNT_MTLS_ENABLED', mtls_base.get('enabled', False))).lower()
+    mtls_enabled_bool = mtls_enabled in {'1', 'true', 'yes'}
+
+    return {
+        'enabled': enabled_env in {'1', 'true', 'yes'},
+        'mode': str(mode_env).lower(),
+        'base_url': get_env_var('RUNT_BASE_URL', base.get('base_url', '')).rstrip('/'),
+        'token_path': base.get('token_path', '/oauth/token'),
+        'vehiculo_path': base.get('vehiculo_path', '/api/vehiculo/consultar'),
+        'timeout_seconds': int(get_env_var('RUNT_TIMEOUT_SECONDS', base.get('timeout_seconds', 15))),
+        'token_ttl_seconds': int(base.get('token_ttl_seconds', 3600)),
+        'token_refresh_skew_seconds': int(base.get('token_refresh_skew_seconds', 60)),
+        'client_id': get_env_var('RUNT_CLIENT_ID', ''),
+        'client_secret': get_env_var('RUNT_CLIENT_SECRET', ''),
+        'mtls': {
+            'enabled': mtls_enabled_bool,
+            'cert_path': get_env_var(mtls_cert_env_name, '') if mtls_enabled_bool else '',
+            'key_path': get_env_var(mtls_key_env_name, '') if mtls_enabled_bool else '',
+            'ca_path': get_env_var(mtls_ca_env_name, '') if mtls_enabled_bool else '',
+        },
+    }
+
+
+@lru_cache(maxsize=1)
+def get_chat_config() -> dict:
+    """Devuelve la configuracion del bot conversacional.
+
+    Returns:
+        Diccionario con claves: enabled, persist_conversaciones,
+        max_historial y debug_vehiculo.
+    """
+    settings = get_settings()
+    base = settings.get('chat', {})
+
+    enabled = str(get_env_var('CHAT_ENABLED', base.get('enabled', True))).lower() in {'1', 'true', 'yes'}
+    persist = str(get_env_var('CHAT_PERSIST_CONVERSACIONES', base.get('persist_conversaciones', True))).lower() in {
+        '1', 'true', 'yes',
+    }
+    debug_vehiculo = str(get_env_var('CHAT_DEBUG_VEHICULO', base.get('debug_vehiculo', False))).lower() in {
+        '1', 'true', 'yes',
+    }
+
+    return {
+        'enabled': enabled,
+        'persist_conversaciones': persist,
+        'max_historial': int(get_env_var('CHAT_MAX_HISTORIAL', base.get('max_historial', 10))),
+        'debug_vehiculo': debug_vehiculo,
+    }

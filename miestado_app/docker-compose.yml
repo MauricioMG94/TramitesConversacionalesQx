@@ -53,10 +53,32 @@ services:
       - SEED_ADMIN_NOMBRE=${SEED_ADMIN_NOMBRE:-Administrador}
       - SEED_ADMIN_CONTRASENA=${SEED_ADMIN_CONTRASENA:-CambiarEnProduccion123*}
       - SEED_ADMIN_ROL=${SEED_ADMIN_ROL:-admin}
+      # RUNT (integracion con el Registro Unico Nacional de Transito).
+      - RUNT_ENABLED=${RUNT_ENABLED:-true}
+      - RUNT_MODE=${RUNT_MODE:-mock}
+      - RUNT_BASE_URL=${RUNT_BASE_URL:-https://pruebas-api.runt.example.gov.co}
+      - RUNT_TIMEOUT_SECONDS=${RUNT_TIMEOUT_SECONDS:-15}
+      - RUNT_CLIENT_ID=${RUNT_CLIENT_ID:-}
+      - RUNT_CLIENT_SECRET=${RUNT_CLIENT_SECRET:-}
+      - RUNT_MTLS_ENABLED=${RUNT_MTLS_ENABLED:-false}
+      - RUNT_CERT_PATH=${RUNT_CERT_PATH:-/secrets/runt/client.crt}
+      - RUNT_KEY_PATH=${RUNT_KEY_PATH:-/secrets/runt/client.key}
+      - RUNT_CA_PATH=${RUNT_CA_PATH:-/secrets/runt/ca.pem}
+      # Chat conversacional (RUNT + intenciones del bot).
+      - CHAT_ENABLED=${CHAT_ENABLED:-true}
+      - CHAT_PERSIST_CONVERSACIONES=${CHAT_PERSIST_CONVERSACIONES:-true}
+      - CHAT_MAX_HISTORIAL=${CHAT_MAX_HISTORIAL:-10}
+      - CHAT_DEBUG_VEHICULO=${CHAT_DEBUG_VEHICULO:-false}
     expose:
       - "8888"
     ports:
       - "${API_EXTERNAL_PORT:-8888}:8888"
+    # Monta los certificados mTLS de RUNT si existen en el host.
+    # Si no existe el directorio ./secrets/runt, Docker no falla al levantar;
+    # el cliente RUNT validara las rutas y devolvera 503 si no encuentra los
+    # archivos al activarse RUNT_MTLS_ENABLED=true.
+    volumes:
+      - ./secrets/runt:/secrets/runt:ro
 
   # ── Frontend (React + Vite construido, servido por nginx) ──
   # El contexto de build es la RAIZ del workspace para que pnpm pueda

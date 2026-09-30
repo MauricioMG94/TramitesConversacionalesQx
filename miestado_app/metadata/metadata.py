@@ -110,3 +110,87 @@ class AuditoriaAcciones:
     usuario_actualizado = 'usuario_actualizado'
     usuario_desactivado = 'usuario_desactivado'
     self_update = 'self_update'
+    runt_consulta = 'runt_consulta'
+    """Consulta a RUNT resuelta (cacheada o nueva)."""
+    runt_consulta_error = 'runt_consulta_error'
+    """Consulta a RUNT que fallo por timeout, red o error del upstream."""
+
+
+class RuntEstados:
+    """Estados de vehiculos devueltos por RUNT."""
+
+    activo = 'ACTIVO'
+    """Vehiculo con registro vigente en RUNT."""
+
+
+class RuntIntents:
+    """Marcadores de intenciones detectadas por el bot conversacional."""
+
+    consulta_vehiculo = 'consulta_vehiculo'
+    """El usuario envio una placa + documento para consultar datos del vehiculo."""
+
+    desconocido = 'desconocido'
+    """Intencion no clasificada; el bot responde sin invocar integraciones."""
+
+
+class MensajesRunt:
+    """Mensajes estandar para el modulo de integracion con RUNT."""
+
+    vehiculo_no_encontrado = (
+        'No se encontro un vehiculo activo asociado a la placa y documento '
+        'proporcionados en RUNT.'
+    )
+    """Detalle cuando el upstream responde sin coincidencias."""
+
+    error_upstream = (
+        'No se pudo conectar con el servicio RUNT en este momento. '
+        'Intentalo nuevamente en unos minutos.'
+    )
+    """Detalle cuando la llamada al cliente RUNT falla por timeout/red."""
+
+    vehiculo_cacheado = 'Consulta a RUNT servida desde cache (%ss restantes).'
+    """Log informativo cuando se reutiliza un token cacheado."""
+
+    vehiculo_nuevo = 'Consulta a RUNT ejecutada; token fresco obtenido.'
+    """Log informativo cuando se obtiene un token nuevo."""
+
+
+class RegexConversacion:
+    """Patrones regex usados por la deteccion de intenciones del bot."""
+
+    placa = r'\b[A-Z]{3}\d{3}\b|\b[A-Z]{3}\d{2}[A-Z]\b'
+    """Placas colombianas tipicas: ABC123 (carros) o ABC12D (motos aunque el RUNT
+    tambien acepta el formato antiguo). Se acepta mayusculas; no se permite pegar."""
+
+    cedula = r'\b\d{6,12}\b'
+    """Documento de identidad numerico (6 a 12 digitos)."""
+
+
+class MensajesChat:
+    """Mensajes estandar del modulo conversacional."""
+
+    bienvenida = (
+        'Hola, soy el asistente de MiEstado. Puedo ayudarte a consultar '
+        'tramites, pagos y datos de vehiculos registrados en RUNT. '
+        'Para consultar un vehiculo, indicame la placa y tu numero de documento.'
+    )
+    """Respuesta por defecto cuando la intencion es desconocida."""
+
+    runt_encontrado = (
+        'Encontre el vehiculo con placa {placa}: {marca} {modelo} ({clase}, '
+        'color {color}). Estado: {estado}. El propietario registrado '
+        '(documento {propietario_doc}) coincide con el que indicaste.'
+    )
+    """Plantilla de respuesta cuando RUNT devuelve datos del vehiculo."""
+
+    runt_no_encontrado = (
+        'No encontre informacion para la placa {placa} con ese documento. '
+        'Verifica que los datos sean correctos o intenta nuevamente.'
+    )
+    """Respuesta cuando RUNT no devuelve coincidencias."""
+
+    runt_error = (
+        'No pude comunicarme con RUNT en este momento. Intenta nuevamente '
+        'en unos minutos.'
+    )
+    """Respuesta cuando la llamada a RUNT falla."""

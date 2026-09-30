@@ -22,3 +22,21 @@ __pycache__/
 
 # uv
 # El lockfile SÍ se commitea; el venv NO.
+
+# Certificados mTLS de RUNT (jamas commitear secretos PEM).
+secrets/
+secrets/runt/
+*.pem
+*.crt
+*.key
+
+# Builds locales
+dist/
+build/
+.cache/
+
+# Cobertura y artefactos de testing
+htmlcov/
+.coverage
+.coverage.*
+.tox/

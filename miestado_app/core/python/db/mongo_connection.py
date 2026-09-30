@@ -62,6 +62,11 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await usuarios.create_index('rol', name='idx_rol')
     logger.info(MensajesDB.indice_creado, usuarios.name, 'correo')
 
+    conversaciones = db[NombreColecciones.resolver('conversaciones')]
+    await conversaciones.create_index('correo_usuario_lc', name='idx_correo_usuario')
+    await conversaciones.create_index('fecha_ultimo_mensaje', name='idx_fecha_ultimo_mensaje')
+    logger.info(MensajesDB.indice_creado, conversaciones.name, 'correo_usuario_lc')
+
 
 async def close_pool() -> None:
     """Cierra el cliente de MongoDB."""
