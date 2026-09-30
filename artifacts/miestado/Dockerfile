@@ -9,8 +9,9 @@ ENV PNPM_HOME="/pnpm" \
     NODE_ENV=production \
     CI=true
 
-# Habilita pnpm via corepack (lee la version del package.json del workspace)
-RUN corepack enable
+# Habilita pnpm via corepack. La version exacta la toma de
+# 'packageManager' en el package.json del workspace (pineada a 9.15.4).
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
 WORKDIR /repo
 
@@ -21,14 +22,12 @@ COPY scripts ./scripts
 COPY artifacts ./artifacts
 
 # Instalacion reproducible con el lockfile del workspace.
-# pnpm@10+ bloquea por defecto los postinstall scripts (esbuild, swc...).
-# 1) Instalamos con --ignore-scripts para que el install no falle por
-#    ERR_PNPM_IGNORED_BUILDS.
-# 2) Luego invocamos pnpm rebuild sobre los paquetes que SI necesitan
-#    ejecutar su build (descargar binario nativo de esbuild, JSC de swc...).
+# Se pinea pnpm@9.15.4 via 'packageManager' en package.json del workspace.
+# Esa version respeta el campo 'pnpm.onlyBuiltDependencies' (tambien en
+# package.json), lo que permite ejecutar los postinstall de esbuild, swc,
+# msw y unrs-resolver sin disparar ERR_PNPM_IGNORED_BUILDS.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --ignore-scripts && \
-    pnpm rebuild esbuild @swc/core msw unrs-resolver
+    pnpm install --frozen-lockfile
 
 # Construir SOLO el paquete del frontend MiEstado.
 ARG VITE_API_BASE=http://localhost:8888
