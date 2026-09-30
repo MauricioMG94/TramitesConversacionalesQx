@@ -35,46 +35,80 @@ lenguaje natural.
 
 ## Despliegue (Docker)
 
-MiEstado trae su propio reverse proxy (Caddy) **aislado del VPS**:
-solo escucha 80/443 para el dominio configurado en `DOMAIN` y no comparte
-red, puertos ni certificados con otros proyectos del servidor.
+Este proyecto se enchufa al mismo **reverse proxy compartido** del VPS
+que sirve tu otro proyecto (Facturacion directoratlas.online). Es
+el mismo patron que usaste ahi: un contenedor `jwilder/nginx-proxy`
+unico en el VPS que enruta por dominio a los frontends de cada
+proyecto. La razon: hay una sola IP publica y una sola pareja de
+puertos 80/443, asi que compartir proxy es la unica opcion.
 
-### A) Produccion con HTTPS automatico (recomendado)
+```
+                    puerto 80/443 del VPS
+                            |
+                            v
+                    ┌──────────────┐
+                    │ nginx-proxy    │ (jwilder, compartido del VPS)
+                    └────────┬──────┘
+       ┌─────────────────────┴─────────────────────┐
+       |                                            |
+directoratlas.online                       miestadoapp.directoratlas.online
+       |                                            |
+       v                                            v
+directoratlas_frontend                       miestado_app_frontend
+       |                                            |
+directoratlas_api                            miestado_app_api
+```
 
-1. **Detener cualquier otro servicio en 80/443** del VPS (ej. un
-   `nginx-proxy` compartido de otro proyecto). Caddy necesita esos
-   puertos libres o el contenedor no arranca:
+### A) Produccion con HTTPS automatico
+
+Requisitos:
+
+1. `jwilder/nginx-proxy` + `nginxproxy/acme-companion` corriendo en el
+   VPS. Si no los tenés, una linea cada uno:
    ```bash
-   docker ps | grep -E 'nginx-proxy|caddy'
-   docker stop nginx-proxy nginx-proxy-acme 2>/dev/null
-   docker rm -f nginx-proxy nginx-proxy-acme 2>/dev/null
+   docker run -d --name nginx-proxy --restart always \
+     -p 80:80 -p 443:443 \
+     -v /var/run/docker.sock:/tmp/docker.sock:ro \
+     -v /etc/docker/nginx-proxy/certs:/etc/nginx/certs:ro \
+     -v /etc/docker/nginx-proxy/htpasswd:/etc/nginx/htpasswd:ro \
+     jwilder/nginx-proxy:latest
+
+   docker run -d --name nginx-proxy-acme --restart always \
+     -v /var/run/docker.sock:/var/run/docker.sock:ro \
+     -v /etc/docker/nginx-proxy/certs:/etc/nginx/certs:rw \
+     -v /etc/docker/nginx-proxy/acme:/etc/acme.sh:rw \
+     -e NGINX_PROXY_CONTAINER=nginx-proxy \
+     -e DEFAULT_EMAIL=admin@directoratlas.online \
+     nginxproxy/acme-companion:latest
+
+   docker network create nginx-proxy
    ```
 
-2. **Configurar DNS** en el registrador de `miestadoapp.online`:
-   - Tipo `A`, host `@`, valor = IP publica del VPS.
-   - Propagar (5-30 min tipicamente).
+2. DNS configurado en el panel de `directoratlas.online`:
+   | Tipo | Nombre | Valor | TTL |
+   |------|--------|-------|-----|
+   | A | `miestadoapp` | IP publica del VPS | 300 |
 
-3. **Editar `miestado_app/.env`** en el VPS:
+3. `.env` correctos:
    ```
-   DOMAIN=miestadoapp.online
-   LETSENCRYPT_EMAIL=tu-correo@ejemplo.com
+   DOMAIN=miestadoapp.directoratlas.online
+   LETSENCRYPT_EMAIL=admin@directoratlas.online
+   PROXY_NETWORK=nginx-proxy
    ```
 
-4. **Levantar el stack completo**:
+4. Levantar MiEstado:
    ```bash
-   cd ~/TramitesConversacionalesQx/miestado_app
+   cd ~/TramitesConversacionesQx/miestado_app
    docker compose up -d --build
-
-   # Esperar 30s a que Caddy emita el cert via HTTP-01
-   docker logs miestado_gateway --tail=30
-   # esperado: 'obtained certificate' y 'miestadoapp.online'
+   docker compose logs --tail=30
    ```
 
-5. **Verificar**:
+5. `docker logs nginx-proxy-acme --tail=40` debería mostrar
+   `obtained certificate for miestadoapp.directoratlas.online` en
+   30s-2min. Cuando eso pase:
    ```bash
-   curl -I https://miestadoapp.online/             # 200 con TLS Let's Encrypt
-   curl -I https://miestadoapp.online/api/healthz  # JSON {"status":"ok"}
-   curl -I https://miestadoapp.online/api/docs     # Swagger UI
+   curl -Iv https://miestadoapp.directoratlas.online/
+   curl -Iv https://directoratlas.online/   # Director Atlas sigue vivo
    ```
 
 ### B) Dev local en el VPS (sin dominio, sin HTTPS)
@@ -82,36 +116,19 @@ red, puertos ni certificados con otros proyectos del servidor.
 ```bash
 cd ~/TramitesConversacionesQx/miestado_app
 test -f .env || cp .env.example .env     # DOMAIN=localhost por default
-# Quitar el gateway del compose para no pelearse por 80/443:
-docker compose up -d --build --scale gateway=0
-# OJO: scale=0 puede no dar el efecto deseado; la alternativa limpia:
-docker compose up -d --build mongo api frontend
-docker compose stop gateway   # si lo tienes corriendo, lo apagas
+docker compose up -d --build
 
 curl -fsS http://localhost:8888/healthz
-curl -I   http://localhost:5173          # frontend por puerto host
+curl -I   http://localhost:5173          # puerto host mapeado del frontend
 ```
 
-Servicios en modo dev:
+Puertos en modo dev:
 
 | Servicio   | Host port | Container port | Descripcion |
 |------------|-----------|----------------|-------------|
 | mongo      | 27017     | 27017          | MongoDB 7 |
 | api        | 8888      | 8888           | FastAPI + Uvicorn |
 | frontend   | 5173      | 3000           | Vite servido por nginx |
-| gateway    | (off)     | 80, 443         | Caddy (solo prod) |
-
-### C) Por qué Caddy y no nginx-proxy compartido
-
-Antes, el compose intentaba conectarse a un `nginx-proxy` global del
-VPS (el mismo que sirve `directoratlas.online` de Facturacion). Eso
-acoplaba MiEstado con cualquier otro proyecto del servidor. Ahora
-MiEstado trae su **propio** Caddy dentro de su compose:
-
-- El cert y la red son de MiEstado, no del VPS.
-- Los logs de `docker logs miestado_gateway` muestran solo este proyecto.
-- Si querés borrar MiEstado, `docker compose down -v` desaparece todo
-  sin afectar a nadie más.
 
 ## Sin dependencias de Replit
 
