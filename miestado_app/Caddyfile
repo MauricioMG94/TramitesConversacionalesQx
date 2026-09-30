@@ -1,32 +1,49 @@
-# Caddyfile - Reverse proxy con HTTPS automatico para MiEstadoApp.
+# Caddyfile - Reverse proxy dedicado de MiEstadoApp.
 #
-# Es un espejo del patron usado en FacturacionElectronicaQx. Esta
-# deshabilitado en docker-compose.yml porque el VPS donde corre este
-# proyecto tiene un contenedor nginx-proxy compartido que ya emite
-# Let's Encrypt para todos los dominios del servidor.
+# Solo enruta el dominio configurado en .env (DOMAIN). NO comparte la
+# responsabilidad con ningun otro reverse proxy del VPS: este Caddy
+# escucha unicamente en 80/443 y rechaza conexiones a cualquier otro
+# Host header.
 #
-# Si en el futuro prefieres no depender de nginx-proxy y aislar MiEstado
-# en su propio gateway, sigue estos pasos:
-#
-#   1. Detener el contenedor nginx-proxy en el VPS:
-#        docker stop nginx-proxy && docker rm nginx-proxy
-#
-#   2. Verificar que los puertos 80 y 443 quedaron libres:
-#        ss -tlnp | grep -E ':80|:443'
-#
-#   3. Descomentar el servicio `gateway` en miestado_app/docker-compose.yml
-#      y los volumenes `caddy_data` / `caddy_config`.
-#
-#   4. Quitar el bloque `nginx-proxy` de la seccion `networks:` del
-#      compose y los env VIRTUAL_HOST/LETSENCRYPT_HOST del frontend.
-#
-#   5. Levantar todo: cd miestado_app && docker compose up -d --build.
-#
-# Resultado: el dominio (configurado en .env como DOMAIN) servira TLS
-#            directamente desde Caddy, sin intermediarios.
+# Caddy emite automaticamente el cert de Let's Encrypt via HTTP-01
+# (necesita DNS A apuntando a la IP del VPS y 80/443 alcanzables desde
+# internet). Renueva solo cuando faltan menos de 30 dias para vencer.
 
-{$DOMAIN} {
-    # El frontend hace proxy /api/ -> api:8888 internamente; aqui solo
-    # necesitamos reenviar todo al contenedor del frontend.
-    reverse_proxy frontend:3000
+{$DOMAIN:miestadoapp.online} {
+    # Seguridad basica.
+    encode gzip zstd
+    header {
+        # Evitar que tu app se pueda embeber en iframes de terceros.
+        X-Frame-Options "SAMEORIGIN"
+        # Forzar HTTPS por un anio cuando el cliente ya negocia TLS.
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        # Saneamiento del header Referer.
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Bloquear sniffing de MIME.
+        X-Content-Type-Options "nosniff"
+        # Ocultar server header (Caddy por defecto lo expone).
+        -Server
+    }
+
+    # Backend publico: el frontend ya hace proxy_pass /api/ -> api:8888
+    # internamente, asi que aqui solo necesitamos reenviar todo al
+    # contenedor del frontend.
+    reverse_proxy frontend:3000 {
+        # Timeout holgado para evitar 504 durante el primer handshake
+        # TLS al backend de Mongo.
+        transport http {
+            dial_timeout 10s
+            response_header_timeout 30s
+        }
+        # Cabecera informativa para debugging en el backend.
+        header_up X-Forwarded-Proto "https"
+        header_up X-Real-IP {remote_host}
+    }
+
+    # Logs estructurados (Nivel info por default; DEBUG solo en depuracion).
+    log {
+        output stdout
+        format console
+        level INFO
+    }
 }

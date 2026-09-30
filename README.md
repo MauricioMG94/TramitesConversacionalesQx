@@ -35,43 +35,61 @@ lenguaje natural.
 
 ## Despliegue (Docker)
 
+MiEstado trae su propio reverse proxy (Caddy) **aislado del VPS**:
+solo escucha 80/443 para el dominio configurado en `DOMAIN` y no comparte
+red, puertos ni certificados con otros proyectos del servidor.
+
 ### A) Produccion con HTTPS automatico (recomendado)
 
-El frontend de MiEstado se enchufa al contenedor `nginx-proxy` que esta
-corriendo en el mismo VPS (el mismo que sirve `https://directoratlas.online`
-de `FacturacionElectronicaQx`). Pasos:
+1. **Detener cualquier otro servicio en 80/443** del VPS (ej. un
+   `nginx-proxy` compartido de otro proyecto). Caddy necesita esos
+   puertos libres o el contenedor no arranca:
+   ```bash
+   docker ps | grep -E 'nginx-proxy|caddy'
+   docker stop nginx-proxy nginx-proxy-acme 2>/dev/null
+   docker rm -f nginx-proxy nginx-proxy-acme 2>/dev/null
+   ```
 
-1. **Configurar DNS** en el registrador del dominio:
-   - Tipo `A`, host `@` (o `miestadoapp.online`), valor = IP publica del VPS.
+2. **Configurar DNS** en el registrador de `miestadoapp.online`:
+   - Tipo `A`, host `@`, valor = IP publica del VPS.
    - Propagar (5-30 min tipicamente).
-2. **Editar `miestado_app/.env`** en el VPS:
+
+3. **Editar `miestado_app/.env`** en el VPS:
    ```
    DOMAIN=miestadoapp.online
    LETSENCRYPT_EMAIL=tu-correo@ejemplo.com
    ```
-3. **Reiniciar frontend** para que `nginx-proxy` lo descubra y emita el cert:
+
+4. **Levantar el stack completo**:
    ```bash
    cd ~/TramitesConversacionalesQx/miestado_app
-   docker compose up -d --build frontend
-   ```
-4. **Verificar**:
-   ```bash
-   curl -I https://miestadoapp.online/         # 200 OK con TLS de Let's Encrypt
-   curl -I https://miestadoapp.online/api/healthz
-   curl -I https://miestadoapp.online/api/docs # Swagger UI de FastAPI
+   docker compose up -d --build
+
+   # Esperar 30s a que Caddy emita el cert via HTTP-01
+   docker logs miestado_gateway --tail=30
+   # esperado: 'obtained certificate' y 'miestadoapp.online'
    ```
 
-Si el certificado no aparece: `docker logs nginx-proxy` suele decir por que.
+5. **Verificar**:
+   ```bash
+   curl -I https://miestadoapp.online/             # 200 con TLS Let's Encrypt
+   curl -I https://miestadoapp.online/api/healthz  # JSON {"status":"ok"}
+   curl -I https://miestadoapp.online/api/docs     # Swagger UI
+   ```
 
 ### B) Dev local en el VPS (sin dominio, sin HTTPS)
 
 ```bash
-cd ~/TramitesConversacionalesQx/miestado_app
+cd ~/TramitesConversacionesQx/miestado_app
 test -f .env || cp .env.example .env     # DOMAIN=localhost por default
-docker compose up -d --build
+# Quitar el gateway del compose para no pelearse por 80/443:
+docker compose up -d --build --scale gateway=0
+# OJO: scale=0 puede no dar el efecto deseado; la alternativa limpia:
+docker compose up -d --build mongo api frontend
+docker compose stop gateway   # si lo tienes corriendo, lo apagas
 
 curl -fsS http://localhost:8888/healthz
-curl -I   http://localhost:5173         # puerto host mapeado del frontend
+curl -I   http://localhost:5173          # frontend por puerto host
 ```
 
 Servicios en modo dev:
@@ -80,14 +98,20 @@ Servicios en modo dev:
 |------------|-----------|----------------|-------------|
 | mongo      | 27017     | 27017          | MongoDB 7 |
 | api        | 8888      | 8888           | FastAPI + Uvicorn |
-| frontend   | 5173      | 3000           | Vite build servido por nginx |
+| frontend   | 5173      | 3000           | Vite servido por nginx |
+| gateway    | (off)     | 80, 443         | Caddy (solo prod) |
 
-### C) Aislamiento total (sin nginx-proxy compartido)
+### C) Por qué Caddy y no nginx-proxy compartido
 
-Si en algun momento queres desligarte de `nginx-proxy` y que MiEstado
-emita su propio HTTPS, `miestado_app/Caddyfile` ya esta preconfigurado
-siguiendo el patron de `FacturacionElectronicaQx`. Pasos de
-migracion documentados al inicio del archivo.
+Antes, el compose intentaba conectarse a un `nginx-proxy` global del
+VPS (el mismo que sirve `directoratlas.online` de Facturacion). Eso
+acoplaba MiEstado con cualquier otro proyecto del servidor. Ahora
+MiEstado trae su **propio** Caddy dentro de su compose:
+
+- El cert y la red son de MiEstado, no del VPS.
+- Los logs de `docker logs miestado_gateway` muestran solo este proyecto.
+- Si querés borrar MiEstado, `docker compose down -v` desaparece todo
+  sin afectar a nadie más.
 
 ## Sin dependencias de Replit
 

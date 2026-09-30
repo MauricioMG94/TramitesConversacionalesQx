@@ -79,31 +79,42 @@ services:
     restart: unless-stopped
     networks:
       - miestado_net
-      - nginx-proxy
     depends_on:
       - api
     expose:
       - "3000"
-    environment:
-      - VIRTUAL_HOST=${DOMAIN}
-      - VIRTUAL_PORT=3000
-      - LETSENCRYPT_HOST=${DOMAIN}
-      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-admin@${DOMAIN}}
     ports:
       - "${FRONTEND_EXTERNAL_PORT:-5173}:3000"
 
+  # ── Gateway dedicado (Caddy) ──
+  # Reverse proxy con HTTPS automatico (Let's Encrypt via HTTP-01).
+  # NO comparte red con ningun otro proyecto del VPS: este contenedor
+  # solo enruta trafico para miestadoapp.online. Los puertos 80 y 443
+  # quedan tomados por MiEstado; si tienes nginx-proxy de otro proyecto
+  # escuchando aqui, detenlo antes de levantar este.
+  gateway:
+    image: caddy:2-alpine
+    container_name: miestado_gateway
+    restart: unless-stopped
+    networks:
+      - miestado_net
+    depends_on:
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN}
+
 volumes:
   mongo_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   miestado_net:
     driver: bridge
-  # Red EXTERNA compartida con el contenedor nginx-proxy que aloja todos
-  # los proyectos del VPS (emision automatica de Let's Encrypt).
-  # El contenedor jwilder/nginx-proxy (lanzado con `docker run`) crea una
-  # red con el nombre LITERAL 'nginx-proxy' (no `nginx-proxy_default`,
-  # que es la convencion cuando viene de un docker-compose.yml propio).
-  # Por eso PROXY_NETWORK=nginx-proxy en .env (no _default).
-  nginx-proxy:
-    external: true
-    name: ${PROXY_NETWORK:-nginx-proxy}
