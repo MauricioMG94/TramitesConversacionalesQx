@@ -30,7 +30,8 @@ COPY artifacts ./artifacts
 # El Dockerfile fija NODE_ENV=production al inicio, lo que normalmente hace
 # que pnpm instale solo dependencias de produccion. Pero Vite (el bundler
 # del frontend) esta en devDependencies, asi que necesitamos instalar las
-# devDeps al menos durante esta etapa. Para eso pasamos --include=dev.
+# devDeps al menos durante esta etapa. Para eso pasamos --prod=false
+# (la negacion explicita; en pnpm 9.15.4 ya no existe --include=dev).
 #
 # Si el lockfile y pnpm-workspace.yaml divergen en 'overrides' (típico
 # cuando el lockfile fue generado con otra version de pnpm), caemos a
@@ -38,8 +39,8 @@ COPY artifacts ./artifacts
 # estado consistente. Solo se ejecuta el fallback la primera vez; las
 # builds siguientes heredan el lockfile actualizado del layer cache.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --include=dev \
-    || pnpm install --no-frozen-lockfile --include=dev
+    pnpm install --frozen-lockfile --prod=false \
+    || pnpm install --no-frozen-lockfile --prod=false
 
 # Construir SOLO el paquete del frontend MiEstado.
 ARG VITE_API_BASE=http://localhost:8888
