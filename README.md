@@ -35,25 +35,59 @@ lenguaje natural.
 
 ## Despliegue (Docker)
 
-Levantar el stack completo (mongo + api + frontend):
+### A) Produccion con HTTPS automatico (recomendado)
+
+El frontend de MiEstado se enchufa al contenedor `nginx-proxy` que esta
+corriendo en el mismo VPS (el mismo que sirve `https://directoratlas.online`
+de `FacturacionElectronicaQx`). Pasos:
+
+1. **Configurar DNS** en el registrador del dominio:
+   - Tipo `A`, host `@` (o `miestadoapp.online`), valor = IP publica del VPS.
+   - Propagar (5-30 min tipicamente).
+2. **Editar `miestado_app/.env`** en el VPS:
+   ```
+   DOMAIN=miestadoapp.online
+   LETSENCRYPT_EMAIL=tu-correo@ejemplo.com
+   ```
+3. **Reiniciar frontend** para que `nginx-proxy` lo descubra y emita el cert:
+   ```bash
+   cd ~/TramitesConversacionalesQx/miestado_app
+   docker compose up -d --build frontend
+   ```
+4. **Verificar**:
+   ```bash
+   curl -I https://miestadoapp.online/         # 200 OK con TLS de Let's Encrypt
+   curl -I https://miestadoapp.online/api/healthz
+   curl -I https://miestadoapp.online/api/docs # Swagger UI de FastAPI
+   ```
+
+Si el certificado no aparece: `docker logs nginx-proxy` suele decir por que.
+
+### B) Dev local en el VPS (sin dominio, sin HTTPS)
 
 ```bash
-cd miestado_app
-test -f .env || cp .env.example .env
+cd ~/TramitesConversacionalesQx/miestado_app
+test -f .env || cp .env.example .env     # DOMAIN=localhost por default
 docker compose up -d --build
 
-# Verificacion
 curl -fsS http://localhost:8888/healthz
-curl -I   http://localhost:5173
+curl -I   http://localhost:5173         # puerto host mapeado del frontend
 ```
 
-Servicios:
+Servicios en modo dev:
 
 | Servicio   | Host port | Container port | Descripcion |
 |------------|-----------|----------------|-------------|
 | mongo      | 27017     | 27017          | MongoDB 7 |
 | api        | 8888      | 8888           | FastAPI + Uvicorn |
 | frontend   | 5173      | 3000           | Vite build servido por nginx |
+
+### C) Aislamiento total (sin nginx-proxy compartido)
+
+Si en algun momento queres desligarte de `nginx-proxy` y que MiEstado
+emita su propio HTTPS, `miestado_app/Caddyfile` ya esta preconfigurado
+siguiendo el patron de `FacturacionElectronicaQx`. Pasos de
+migracion documentados al inicio del archivo.
 
 ## Sin dependencias de Replit
 

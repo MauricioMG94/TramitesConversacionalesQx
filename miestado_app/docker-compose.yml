@@ -66,16 +66,31 @@ services:
       context: ..
       dockerfile: artifacts/miestado/Dockerfile
       args:
-        # URL desde la que el navegador llamara a la API.
-        # En piloto el frontend sirve en localhost:5173 y la API en localhost:8888.
-        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8888}
+        # Ruta RELATIVA al backend Express (mismo origen que el frontend).
+        # El nginx interno del contenedor hace proxy_pass /api/ -> http://api:8888.
+        # En piloto local, dejar el default (/api). Para usar un dominio
+        # externo con CORS separado, exportar VITE_API_BASE=https://api.example.com.
+        VITE_API_BASE: ${VITE_API_BASE:-/api}
     image: miestado-frontend:latest
     container_name: miestado_app_frontend
     restart: unless-stopped
     networks:
       - miestado_net
+      - nginx-proxy
     depends_on:
       - api
+    expose:
+      - "3000"
+    # Lectura publica en HTTPS via el contenedor nginx-proxy del VPS.
+    # El contenedor nginx-proxy (externo a este compose, red nginx-proxy_default)
+    # emite Let's Encrypt automaticamente cuando arranca este contenedor.
+    # Configuralo en .env con DOMAIN=miestadoapp.online (o localhost en dev).
+    environment:
+      - VIRTUAL_HOST=${DOMAIN}
+      - VIRTUAL_PORT=3000
+      - LETSENCRYPT_HOST=${DOMAIN}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-admin@${DOMAIN}}
+    # Mantenemos mapeo de host al 5173 para dev local sin nginx-proxy.
     ports:
       - "${FRONTEND_EXTERNAL_PORT:-5173}:3000"
 
@@ -85,3 +100,9 @@ volumes:
 networks:
   miestado_net:
     driver: bridge
+  # Red EXTERNA compartida con el contenedor nginx-proxy que aloja todos
+  # los proyectos del VPS (emision automatica de Let's Encrypt).
+  # El contenedor nginx-proxy crea esta red en su propio compose.
+  nginx-proxy:
+    external: true
+    name: ${PROXY_NETWORK:-nginx-proxy_default}

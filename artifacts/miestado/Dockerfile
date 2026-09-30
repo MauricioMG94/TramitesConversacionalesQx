@@ -43,7 +43,11 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     || pnpm install --no-frozen-lockfile --prod=false
 
 # Construir SOLO el paquete del frontend MiEstado.
-ARG VITE_API_BASE=http://localhost:8888
+# VITE_API_BASE debe ser una ruta RELATIVA (`/api`) para que el SPA
+# siempre pegue al mismo origen. Asi se evita configurar CORS y funciona
+# identico en dev (http://localhost) y prod (https://miestadoapp.online)
+# gracias al proxy /api/ que sirve el nginx del frontend hacia api:8888.
+ARG VITE_API_BASE=/api
 ENV VITE_API_BASE=${VITE_API_BASE}
 
 RUN pnpm --filter @workspace/miestado build

@@ -1,0 +1,32 @@
+# Caddyfile - Reverse proxy con HTTPS automatico para MiEstadoApp.
+#
+# Es un espejo del patron usado en FacturacionElectronicaQx. Esta
+# deshabilitado en docker-compose.yml porque el VPS donde corre este
+# proyecto tiene un contenedor nginx-proxy compartido que ya emite
+# Let's Encrypt para todos los dominios del servidor.
+#
+# Si en el futuro prefieres no depender de nginx-proxy y aislar MiEstado
+# en su propio gateway, sigue estos pasos:
+#
+#   1. Detener el contenedor nginx-proxy en el VPS:
+#        docker stop nginx-proxy && docker rm nginx-proxy
+#
+#   2. Verificar que los puertos 80 y 443 quedaron libres:
+#        ss -tlnp | grep -E ':80|:443'
+#
+#   3. Descomentar el servicio `gateway` en miestado_app/docker-compose.yml
+#      y los volumenes `caddy_data` / `caddy_config`.
+#
+#   4. Quitar el bloque `nginx-proxy` de la seccion `networks:` del
+#      compose y los env VIRTUAL_HOST/LETSENCRYPT_HOST del frontend.
+#
+#   5. Levantar todo: cd miestado_app && docker compose up -d --build.
+#
+# Resultado: el dominio (configurado en .env como DOMAIN) servira TLS
+#            directamente desde Caddy, sin intermediarios.
+
+{$DOMAIN} {
+    # El frontend hace proxy /api/ -> api:8888 internamente; aqui solo
+    # necesitamos reenviar todo al contenedor del frontend.
+    reverse_proxy frontend:3000
+}
