@@ -22,11 +22,12 @@ COPY artifacts ./artifacts
 
 # Instalacion reproducible con el lockfile del workspace.
 # pnpm@10+ bloquea por defecto los postinstall scripts (esbuild, swc...).
-# Forzamos su ejecucion a traves de --shell-mode + pnpm rebuild para
-# que el binario nativo de esbuild quede disponible aunque el field
-# 'onlyBuiltDependencies' no se aplique en este contexto (pnpm 12.8.1+).
+# 1) Instalamos con --ignore-scripts para que el install no falle por
+#    ERR_PNPM_IGNORED_BUILDS.
+# 2) Luego invocamos pnpm rebuild sobre los paquetes que SI necesitan
+#    ejecutar su build (descargar binario nativo de esbuild, JSC de swc...).
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile && \
+    pnpm install --frozen-lockfile --ignore-scripts && \
     pnpm rebuild esbuild @swc/core msw unrs-resolver
 
 # Construir SOLO el paquete del frontend MiEstado.
