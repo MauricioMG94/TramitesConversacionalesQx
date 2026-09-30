@@ -44,9 +44,12 @@ services:
       - MONGO_URI=mongodb://mongo:27017
       - SECRET_KEY=${SECRET_KEY:-please-change-me-please-change-me}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
-      # Origenes permitidos: el navegador llega al api desde el host (localhost)
-      # o desde un frontend que viva dentro del stack docker.
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost:8888}
+      # Origenes CORS: se arman aqui con interpolacion de Compose para
+      # garantizar que ${DOMAIN} SI se expanda a 'miestadoapp.online'.
+      # Si lo hicieras en .env, Docker pasaria el literal '${DOMAIN}'
+      # sin expandir y el navegador nunca haria match.
+      # En produccion, agrega dominios extras separados por coma.
+      - CORS_ORIGINS=https://${DOMAIN},http://localhost:5173,http://localhost:3000,http://localhost:8888
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SEED_ADMIN_ENABLED=${SEED_ADMIN_ENABLED:-true}
       - SEED_ADMIN_CORREO=${SEED_ADMIN_CORREO:-admin@miestado.local}
