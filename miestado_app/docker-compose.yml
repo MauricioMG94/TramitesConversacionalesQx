@@ -64,7 +64,7 @@ services:
   # ── Frontend (React + Vite construido, servido por nginx) ──
   # El contexto de build es la RAIZ del workspace para que pnpm pueda
   # resolver el monorepo. El Dockerfile vive en artifacts/miestado/.
-frontend:
+  frontend:
     build:
       context: ..
       dockerfile: artifacts/miestado/Dockerfile
