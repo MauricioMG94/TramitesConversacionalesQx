@@ -64,7 +64,7 @@ services:
   # ── Frontend (React + Vite construido, servido por nginx) ──
   # El contexto de build es la RAIZ del workspace para que pnpm pueda
   # resolver el monorepo. El Dockerfile vive en artifacts/miestado/.
-  frontend:
+frontend:
     build:
       context: ..
       dockerfile: artifacts/miestado/Dockerfile
@@ -79,21 +79,21 @@ services:
     restart: unless-stopped
     networks:
       - miestado_net
-      - nginx-proxy
     depends_on:
       - api
     expose:
       - "3000"
-    # Lectura publica en HTTPS via el contenedor nginx-proxy del VPS.
-    # El contenedor nginx-proxy (externo a este compose, red nginx-proxy_default)
-    # emite Let's Encrypt automaticamente cuando arranca este contenedor.
-    # Configuralo en .env con DOMAIN=miestadoapp.online (o localhost en dev).
     environment:
       - VIRTUAL_HOST=${DOMAIN}
       - VIRTUAL_PORT=3000
       - LETSENCRYPT_HOST=${DOMAIN}
       - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-admin@${DOMAIN}}
-    # Mantenemos mapeo de host al 5173 para dev local sin nginx-proxy.
+    # HTTPS via nginx-proxy si existe la red externa (configurable con
+    # PROXY_NETWORK en .env). Se deja como comentario porque cuando la
+    # red no existe, el `up` falla; ver miestado_app/Caddyfile para un
+    # gateway dedicado si no queres depender del contenedor compartido.
+    # networks:
+    #   - nginx-proxy
     ports:
       - "${FRONTEND_EXTERNAL_PORT:-5173}:3000"
 
@@ -103,9 +103,12 @@ volumes:
 networks:
   miestado_net:
     driver: bridge
-  # Red EXTERNA compartida con el contenedor nginx-proxy que aloja todos
-  # los proyectos del VPS (emision automatica de Let's Encrypt).
-  # El contenedor nginx-proxy crea esta red en su propio compose.
+  # Red EXTERNA opcional para compartir nginx-proxy entre proyectos en
+  # el VPS. Se declara como external; si no existe (porque todavia no
+  # instalaste el nginx-proxy), docker-compose no rompe: solo no se
+  # hace nada y el frontend queda accesible solo por mapeo de host
+  # (5173 -> 3000, util para dev local).
   nginx-proxy:
     external: true
     name: ${PROXY_NETWORK:-nginx-proxy_default}
+    optional: true
