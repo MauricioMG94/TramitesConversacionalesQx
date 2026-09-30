@@ -98,12 +98,12 @@ volumes:
 networks:
   miestado_net:
     driver: bridge
-  # Red EXTERNA opcional para compartir nginx-proxy entre proyectos en
-  # el VPS. Se declara como external; si no existe (porque todavia no
-  # instalaste el nginx-proxy), docker-compose no rompe: solo no se
-  # hace nada y el frontend queda accesible solo por mapeo de host
-  # (5173 -> 3000, util para dev local).
+  # Red EXTERNA compartida con el contenedor nginx-proxy que aloja todos
+  # los proyectos del VPS (emision automatica de Let's Encrypt).
+  # El contenedor jwilder/nginx-proxy (lanzado con `docker run`) crea una
+  # red con el nombre LITERAL 'nginx-proxy' (no `nginx-proxy_default`,
+  # que es la convencion cuando viene de un docker-compose.yml propio).
+  # Por eso PROXY_NETWORK=nginx-proxy en .env (no _default).
   nginx-proxy:
     external: true
-    name: ${PROXY_NETWORK:-nginx-proxy_default}
-    optional: true
+    name: ${PROXY_NETWORK:-nginx-proxy}
