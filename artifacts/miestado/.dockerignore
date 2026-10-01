@@ -4,17 +4,19 @@ dist
 .vite
 .cache
 
+# CRITICO: NO ignorar el nginx.conf del frontend ni nada dentro de
+# este directorio de artifacts: el Dockerfile los necesita en runtime.
+!nginx.conf
+!artifacts
+
 # Logs y archivos temporales.
 *.log
 tmp
 
-# Artefactos de Replit y configuraciones locales.
-.replit-artifact
-.replit
-.upm
+# Recursos estaticos auxiliares.
 attached_assets
 
-# Backends y datos.
+# Backends y datos sensibles.
 miestado_app/.venv
 miestado_app/.env
 

@@ -18,12 +18,28 @@ import {
 // ─────────────────────────────────────────
 // Configuracion: URL base del backend FastAPI
 // Se puede sobreescribir con VITE_API_BASE en .env del frontend.
+// En produccion debe quedar VACIA: App.tsx concatena el prefijo
+// `/api/...` explicitamente, asi que si VITE_API_BASE=/api la URL
+// final queda `/api/api/auth/token` y el backend responde 404.
+// La normalizacion de abajo tolera un valor con `/api` redundante
+// o con slashes sobrantes, para que un eventual `VITE_API_BASE=/api`
+// en .env siga funcionando en vez de romper el login.
 // ─────────────────────────────────────────
-const API_BASE: string =
+const RAW_API_BASE: string =
   ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_BASE as string) ||
   (typeof window !== 'undefined' && window.location.hostname === 'localhost'
     ? 'http://localhost:8888'
     : '');
+
+// `API_BASE` debe ser un ORIGEN (string vacio = mismo origen, o http://host:puerto).
+// Nunca debe terminar en `/api`, porque las rutas ya incluyen ese prefijo.
+export const API_BASE: string = (() => {
+  const trimmed = RAW_API_BASE.trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  // Si viene como `/api` o `/api/v2`, recortamos ese segmento final
+  // para evitar `/api/api/...` en la URL compuesta.
+  return trimmed.replace(/\/api(?:\/[^/]+)?$/i, '');
+})();
 
 // ─────────────────────────────────────────
 // AuthContext: token JWT, datos del usuario, login/logout.

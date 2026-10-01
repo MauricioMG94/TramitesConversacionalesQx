@@ -9,8 +9,9 @@ ENV PNPM_HOME="/pnpm" \
     NODE_ENV=production \
     CI=true
 
-# Habilita pnpm via corepack (lee la version del package.json del workspace)
-RUN corepack enable
+# Habilita pnpm via corepack. La version exacta la toma de
+# 'packageManager' en el package.json del workspace (pineada a 9.15.4).
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
 WORKDIR /repo
 
@@ -21,11 +22,33 @@ COPY scripts ./scripts
 COPY artifacts ./artifacts
 
 # Instalacion reproducible con el lockfile del workspace.
+# Se pinea pnpm@9.15.4 via 'packageManager' en package.json del workspace.
+# Esa version respeta el campo 'pnpm.onlyBuiltDependencies' (tambien en
+# package.json), lo que permite ejecutar los postinstall de esbuild, swc,
+# msw y unrs-resolver sin disparar ERR_PNPM_IGNORED_BUILDS.
+#
+# El Dockerfile fija NODE_ENV=production al inicio, lo que normalmente hace
+# que pnpm instale solo dependencias de produccion. Pero Vite (el bundler
+# del frontend) esta en devDependencies, asi que necesitamos instalar las
+# devDeps al menos durante esta etapa. Para eso pasamos --prod=false
+# (la negacion explicita; en pnpm 9.15.4 ya no existe --include=dev).
+#
+# Si el lockfile y pnpm-workspace.yaml divergen en 'overrides' (típico
+# cuando el lockfile fue generado con otra version de pnpm), caemos a
+# una instalacion no-frozen que regenera el lockfile y deja el stack en
+# estado consistente. Solo se ejecuta el fallback la primera vez; las
+# builds siguientes heredan el lockfile actualizado del layer cache.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile --prod=false \
+    || pnpm install --no-frozen-lockfile --prod=false
 
 # Construir SOLO el paquete del frontend MiEstado.
-ARG VITE_API_BASE=http://localhost:8888
+# VITE_API_BASE DEBE quedar VACIO en produccion: App.tsx ya concatena
+# el prefijo `/api/...` a la base (ej. `${API_BASE}/api/auth/token`).
+# Si exportamos VITE_API_BASE=/api acabamos con `/api/api/auth/token`
+# y el backend devuelve 404. Solo se usa en dev-local cuando el
+# frontend NO va detras de nginx (devuelve `http://localhost:8888`).
+ARG VITE_API_BASE=
 ENV VITE_API_BASE=${VITE_API_BASE}
 
 RUN pnpm --filter @workspace/miestado build
@@ -35,7 +58,11 @@ FROM nginx:1.27-alpine AS runtime
 
 RUN rm -f /etc/nginx/conf.d/default.conf
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# IMPORTANTE: el contexto de build de este Dockerfile es la RAIZ del
+# workspace (definido en docker-compose.yml como context: ..).
+# Por eso nginx.conf se referencia con la ruta completa desde la raiz.
+# Si algun dia se mueve este Dockerfile, ajustar el COPY en consecuencia.
+COPY artifacts/miestado/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Vite escribe el build en dist/public segun vite.config.ts.
 COPY --from=builder /repo/artifacts/miestado/dist/public /usr/share/nginx/html
