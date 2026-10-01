@@ -35,88 +35,92 @@ lenguaje natural.
 
 ## Despliegue (Docker)
 
-Este proyecto se enchufa al mismo **reverse proxy compartido** del VPS
-que sirve tu otro proyecto (Facturacion directoratlas.online). Es
-el mismo patron que usaste ahi: un contenedor `jwilder/nginx-proxy`
-unico en el VPS que enruta por dominio a los frontends de cada
-proyecto. La razon: hay una sola IP publica y una sola pareja de
-puertos 80/443, asi que compartir proxy es la unica opcion.
+MiEstado trae su propio reverse proxy (**Caddy** dentro del compose).
+Solo él escucha 80/443 — no comparte puertos ni red con jwilder/nginx-proxy
+de otros proyectos del VPS. Caddy emite los certs Let's Encrypt y enruta
+por dominio a los contenedores backend en su red interna (`miestado_net`).
 
 ```
-                    puerto 80/443 del VPS
+                     puerto 80/443 del VPS
                             |
                             v
-                    ┌──────────────┐
-                    │ nginx-proxy    │ (jwilder, compartido del VPS)
-                    └────────┬──────┘
-       ┌─────────────────────┴─────────────────────┐
-       |                                            |
-directoratlas.online                       miestadoapp.directoratlas.online
-       |                                            |
-       v                                            v
-directoratlas_frontend                       miestado_app_frontend
-       |                                            |
-directoratlas_api                            miestado_app_api
+                  ┌──────────────────┐
+                  │ miestado_gateway    │ (Caddy, dentro de este compose)
+                  └───────┬──────────┘
+       ┌───────────────────┴────────────────────┐
+       |                                  |
+ miestadoapp.217.216.85.110.nip.io      directoratlas.online (placeholder OK /
+       |                                    o proxy a facturacion_frontend cuando
+       v                                     vuelva a estar disponible en miestado_net)
+ miestado_app_frontend
+       |
+ miestado_app_api
 ```
 
-### A) Produccion con HTTPS automatico
+### A) Produccion — `miestadoapp.<dominio>`
 
-Requisitos:
+`DOMAIN` en `.env` apunta al host público. Hay dos formas válidas:
 
-1. `jwilder/nginx-proxy` + `nginxproxy/acme-companion` corriendo en el
-   VPS. Si no los tenés, una linea cada uno:
+| DNS | Cómo |
+|---|---|
+| Dominio real (ej. `miestadoapp.directoratlas.online`) | Requiere crear un registro A en el panel del dominio padre. |
+| Subdominio mágico via `nip.io` (lo que usamos de prueba) | `miestadoapp.<IP-VPS>.nip.io` resuelve a `<IP-VPS>` sin comprar nada. |
+
+`nip.io` es útil cuando no tenés acceso al panel DNS del dominio padre
+y querés probar el stack. Para producción real, se recomienda comprar
+el dominio o coordinar con quien lo tenga.
+
+Levantar el stack:
+
+```bash
+cd ~/TramitesConversacionesQx
+git pull origin master
+cd miestado_app
+test -f .env || cp .env.example .env
+# Ajustar DOMAIN segun corresponda
+docker compose up -d --build
+
+# Esperar 30-60s a que Caddy emita cert via HTTP-01
+docker logs miestado_gateway --tail=30
+# cuando veas: 'certificate obtained successfully'
+curl -Iv https://$DOMAIN/
+```
+
+### B) Multi-tenant: directoratlas.online también desde este Caddy
+
+El Caddyfile YA tiene un site block para `directoratlas.online`. Por ahora
+responde con `503 "servicio en migración, mientras tanto visitá
+https://miestadoapp.217.216.85.110.nip.io/"` para que el browser NO muestre
+`ERR_SSL_PROTOCOL_ERROR` cuando lo visitemos.
+
+Si querés **recuperar el servicio real de directoratlas** (Facturacion):
+
+1. Asegurate que el contenedor frontend de directoratlas esté levantado
+   en el VPS (ej. `directoratlas_frontend` o `facturacion_frontend`).
+2. Conectá ese contenedor a la red de MiEstado:
    ```bash
-   docker run -d --name nginx-proxy --restart always \
-     -p 80:80 -p 443:443 \
-     -v /var/run/docker.sock:/tmp/docker.sock:ro \
-     -v /etc/docker/nginx-proxy/certs:/etc/nginx/certs:ro \
-     -v /etc/docker/nginx-proxy/htpasswd:/etc/nginx/htpasswd:ro \
-     jwilder/nginx-proxy:latest
-
-   docker run -d --name nginx-proxy-acme --restart always \
-     -v /var/run/docker.sock:/var/run/docker.sock:ro \
-     -v /etc/docker/nginx-proxy/certs:/etc/nginx/certs:rw \
-     -v /etc/docker/nginx-proxy/acme:/etc/acme.sh:rw \
-     -e NGINX_PROXY_CONTAINER=nginx-proxy \
-     -e DEFAULT_EMAIL=admin@directoratlas.online \
-     nginxproxy/acme-companion:latest
-
-   docker network create nginx-proxy
+   docker network connect miestado_app_miestado_net <container_name>
    ```
-
-2. DNS configurado en el panel de `directoratlas.online`:
-   | Tipo | Nombre | Valor | TTL |
-   |------|--------|-------|-----|
-   | A | `miestadoapp` | IP publica del VPS | 300 |
-
-3. `.env` correctos:
+3. En `miestado_app/Caddyfile`, cambiá el bloque `directoratlas.online`:
+   ```diff
+   -    respond 503 "directoratlas.online - servicio en migracion."
+   +    reverse_proxy directoratlas_frontend:3000 {
+   +        header_up X-Forwarded-Proto "https"
+   +    }
    ```
-   DOMAIN=miestadoapp.directoratlas.online
-   LETSENCRYPT_EMAIL=admin@directoratlas.online
-   PROXY_NETWORK=nginx-proxy
-   ```
+4. Reiniciá Caddy: `docker compose restart gateway`.
+5. Esperá ~30s a que Caddy emita cert para `directoratlas.online`.
 
-4. Levantar MiEstado:
-   ```bash
-   cd ~/TramitesConversacionesQx/miestado_app
-   docker compose up -d --build
-   docker compose logs --tail=30
-   ```
+Ambas URLs quedan operativas con HTTPS automático.
 
-5. `docker logs nginx-proxy-acme --tail=40` debería mostrar
-   `obtained certificate for miestadoapp.directoratlas.online` en
-   30s-2min. Cuando eso pase:
-   ```bash
-   curl -Iv https://miestadoapp.directoratlas.online/
-   curl -Iv https://directoratlas.online/   # Director Atlas sigue vivo
-   ```
-
-### B) Dev local en el VPS (sin dominio, sin HTTPS)
+### C) Dev local en el VPS (sin dominio, sin HTTPS)
 
 ```bash
 cd ~/TramitesConversacionesQx/miestado_app
 test -f .env || cp .env.example .env     # DOMAIN=localhost por default
+# Levantar todo EXCEPTO el gateway (no pelea por 80/443):
 docker compose up -d --build
+docker compose stop gateway   # si lo tienes corriendo, lo apagas
 
 curl -fsS http://localhost:8888/healthz
 curl -I   http://localhost:5173          # puerto host mapeado del frontend
