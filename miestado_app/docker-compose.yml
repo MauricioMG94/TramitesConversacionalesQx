@@ -79,31 +79,43 @@ services:
     restart: unless-stopped
     networks:
       - miestado_net
-      - nginx-proxy
     depends_on:
       - api
     expose:
       - "3000"
-    environment:
-      - VIRTUAL_HOST=${DOMAIN}
-      - VIRTUAL_PORT=3000
-      - LETSENCRYPT_HOST=${DOMAIN}
-      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-admin@${DOMAIN}}
     ports:
       - "${FRONTEND_EXTERNAL_PORT:-5173}:3000"
 
+  # ── Gateway dedicado (Caddy) ──
+  # Reverse proxy con HTTPS automatico (Let's Encrypt via HTTP-01, sin
+  # necesidad de configurar dns-01 ni volumenes compartidos).
+  # Solo escucha 80/443 para el dominio configurado en DOMAIN. Caddy
+  # escribe los challenge tokens INTERNAMENTE y los sirve al path
+  # /.well-known/acme-challenge/ correctamente sin tener que montar
+  # directorios ni coordinar con jwilder/nginx-proxy.
+  gateway:
+    image: caddy:2-alpine
+    container_name: miestado_gateway
+    restart: unless-stopped
+    networks:
+      - miestado_net
+    depends_on:
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN}
+
 volumes:
   mongo_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   miestado_net:
     driver: bridge
-  # Red EXTERNA compartida con el contenedor jwilder/nginx-proxy del VPS.
-  # Este mismo proxy enruta tambien directoratlas.online (Facturacion),
-  # por economia de puertos (1 sola IP publica, 1 solo cert manager,
-  # 1 sola config). Si en algun momento prefieres aislar MiEstado
-  # completamente, quita esta red y agrega un servicio 'gateway'
-  # (Caddy) propio en este mismo compose.
-  nginx-proxy:
-    external: true
-    name: ${PROXY_NETWORK:-nginx-proxy}
