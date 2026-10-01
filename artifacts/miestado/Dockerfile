@@ -43,11 +43,12 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     || pnpm install --no-frozen-lockfile --prod=false
 
 # Construir SOLO el paquete del frontend MiEstado.
-# VITE_API_BASE debe ser una ruta RELATIVA (`/api`) para que el SPA
-# siempre pegue al mismo origen. Asi se evita configurar CORS y funciona
-# identico en dev (http://localhost) y prod (https://miestadoapp.online)
-# gracias al proxy /api/ que sirve el nginx del frontend hacia api:8888.
-ARG VITE_API_BASE=/api
+# VITE_API_BASE DEBE quedar VACIO en produccion: App.tsx ya concatena
+# el prefijo `/api/...` a la base (ej. `${API_BASE}/api/auth/token`).
+# Si exportamos VITE_API_BASE=/api acabamos con `/api/api/auth/token`
+# y el backend devuelve 404. Solo se usa en dev-local cuando el
+# frontend NO va detras de nginx (devuelve `http://localhost:8888`).
+ARG VITE_API_BASE=
 ENV VITE_API_BASE=${VITE_API_BASE}
 
 RUN pnpm --filter @workspace/miestado build
