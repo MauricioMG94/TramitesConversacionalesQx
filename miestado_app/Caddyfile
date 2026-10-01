@@ -1,0 +1,72 @@
+# Caddyfile - Reverse proxy dedicado de MiEstadoApp.
+#
+# Caddy escucha en 80/443 y enruta por dominio. Cada site block abajo
+# cubre un dominio público distinto y lo envia a su contenedor de
+# backend en la red interna `miestado_net`.
+#
+# Caddy emite automaticamente el cert de Let's Encrypt via HTTP-01
+# (necesita DNS A apuntando a la IP del VPS y 80/443 alcanzables desde
+# internet). Renueva solo cuando faltan menos de 30 dias para vencer.
+
+# ──────────────────────────────────────────────────────────────────
+# 1) MiEstado principal.
+#    DOMAIN se lee de .env. Por default es miestadoapp.217.216.85.110.nip.io
+#    (nip.io resuelve a la IP literal sin necesidad de DNS panel).
+#    Para usar un dominio propio (comprado o subdominio real), edita
+#    DOMAIN en .env y reinicia este container.
+# ──────────────────────────────────────────────────────────────────
+{$DOMAIN:miestadoapp.217.216.85.110.nip.io} {
+    encode gzip zstd
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+
+    # Backend publico: el frontend hace proxy_pass /api/ -> api:8888
+    # internamente; aqui solo necesitamos reenviar todo al contenedor.
+    reverse_proxy frontend:3000 {
+        transport http {
+            dial_timeout 10s
+            response_header_timeout 30s
+        }
+        header_up X-Forwarded-Proto "https"
+        header_up X-Real-IP {remote_host}
+    }
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}
+
+# ──────────────────────────────────────────────────────────────────
+# 2) directoratlas.online (Facturacion).
+#    Mientras el frontend de directoratlas (facturacion_frontend) no
+#    esté en esta red `miestado_net`, este block devuelve un 503 con
+#    mensaje de migracion y link a MiEstado. Cuando vuelvas a levantar
+#    el frontend de directoratlas conectado a esta misma red
+#    (ver README > "Direcciones multi-tenant"), solo cambia la linea
+#    `respond` por `reverse_proxy <container_facturacion>:3000`.
+# ──────────────────────────────────────────────────────────────────
+directoratlas.online www.directoratlas.online {
+    encode gzip zstd
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+
+    respond 503 "directoratlas.online - servicio en migracion.\nMientras tanto, https://miestadoapp.217.216.85.110.nip.io/ esta operativo."
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}

@@ -26,11 +26,29 @@ COPY artifacts ./artifacts
 # Esa version respeta el campo 'pnpm.onlyBuiltDependencies' (tambien en
 # package.json), lo que permite ejecutar los postinstall de esbuild, swc,
 # msw y unrs-resolver sin disparar ERR_PNPM_IGNORED_BUILDS.
+#
+# El Dockerfile fija NODE_ENV=production al inicio, lo que normalmente hace
+# que pnpm instale solo dependencias de produccion. Pero Vite (el bundler
+# del frontend) esta en devDependencies, asi que necesitamos instalar las
+# devDeps al menos durante esta etapa. Para eso pasamos --prod=false
+# (la negacion explicita; en pnpm 9.15.4 ya no existe --include=dev).
+#
+# Si el lockfile y pnpm-workspace.yaml divergen en 'overrides' (típico
+# cuando el lockfile fue generado con otra version de pnpm), caemos a
+# una instalacion no-frozen que regenera el lockfile y deja el stack en
+# estado consistente. Solo se ejecuta el fallback la primera vez; las
+# builds siguientes heredan el lockfile actualizado del layer cache.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile --prod=false \
+    || pnpm install --no-frozen-lockfile --prod=false
 
 # Construir SOLO el paquete del frontend MiEstado.
-ARG VITE_API_BASE=http://localhost:8888
+# VITE_API_BASE DEBE quedar VACIO en produccion: App.tsx ya concatena
+# el prefijo `/api/...` a la base (ej. `${API_BASE}/api/auth/token`).
+# Si exportamos VITE_API_BASE=/api acabamos con `/api/api/auth/token`
+# y el backend devuelve 404. Solo se usa en dev-local cuando el
+# frontend NO va detras de nginx (devuelve `http://localhost:8888`).
+ARG VITE_API_BASE=
 ENV VITE_API_BASE=${VITE_API_BASE}
 
 RUN pnpm --filter @workspace/miestado build

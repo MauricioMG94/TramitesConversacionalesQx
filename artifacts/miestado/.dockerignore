@@ -13,13 +13,10 @@ dist
 *.log
 tmp
 
-# Artefactos de Replit y configuraciones locales.
-.replit-artifact
-.replit
-.upm
+# Recursos estaticos auxiliares.
 attached_assets
 
-# Backends y datos.
+# Backends y datos sensibles.
 miestado_app/.venv
 miestado_app/.env
 

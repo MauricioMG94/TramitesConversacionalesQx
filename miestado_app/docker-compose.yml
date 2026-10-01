@@ -44,9 +44,12 @@ services:
       - MONGO_URI=mongodb://mongo:27017
       - SECRET_KEY=${SECRET_KEY:-please-change-me-please-change-me}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
-      # Origenes permitidos: el navegador llega al api desde el host (localhost)
-      # o desde un frontend que viva dentro del stack docker.
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost:8888}
+      # Origenes CORS: se arman aqui con interpolacion de Compose para
+      # garantizar que ${DOMAIN} SI se expanda a 'miestadoapp.online'.
+      # Si lo hicieras en .env, Docker pasaria el literal '${DOMAIN}'
+      # sin expandir y el navegador nunca haria match.
+      # En produccion, agrega dominios extras separados por coma.
+      - CORS_ORIGINS=https://${DOMAIN},http://localhost:5173,http://localhost:3000,http://localhost:8888
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SEED_ADMIN_ENABLED=${SEED_ADMIN_ENABLED:-true}
       - SEED_ADMIN_CORREO=${SEED_ADMIN_CORREO:-admin@miestado.local}
@@ -88,9 +91,13 @@ services:
       context: ..
       dockerfile: artifacts/miestado/Dockerfile
       args:
-        # URL desde la que el navegador llamara a la API.
-        # En piloto el frontend sirve en localhost:5173 y la API en localhost:8888.
-        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8888}
+        # En produccion VITE_API_BASE debe quedar VACIO. App.tsx concatena
+        # `${API_BASE}/api/auth/token`, etc.; si exportamos /api aqui
+        # termina llamando `/api/api/auth/token` y el backend 404ea.
+        # Solo se usa no-vacio cuando el frontend se sirve sin nginx
+        # delante (dev local con Vite dev-server en otro origen); ahi se
+        # pone la URL absoluta del backend, p.ej. http://localhost:8888.
+        VITE_API_BASE: ${VITE_API_BASE:-}
     image: miestado-frontend:latest
     container_name: miestado_app_frontend
     restart: unless-stopped
@@ -98,11 +105,40 @@ services:
       - miestado_net
     depends_on:
       - api
+    expose:
+      - "3000"
     ports:
       - "${FRONTEND_EXTERNAL_PORT:-5173}:3000"
 
+  # ── Gateway dedicado (Caddy) ──
+  # Reverse proxy con HTTPS automatico (Let's Encrypt via HTTP-01, sin
+  # necesidad de configurar dns-01 ni volumenes compartidos).
+  # Solo escucha 80/443 para el dominio configurado en DOMAIN. Caddy
+  # escribe los challenge tokens INTERNAMENTE y los sirve al path
+  # /.well-known/acme-challenge/ correctamente sin tener que montar
+  # directorios ni coordinar con jwilder/nginx-proxy.
+  gateway:
+    image: caddy:2-alpine
+    container_name: miestado_gateway
+    restart: unless-stopped
+    networks:
+      - miestado_net
+    depends_on:
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN}
+
 volumes:
   mongo_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   miestado_net:
